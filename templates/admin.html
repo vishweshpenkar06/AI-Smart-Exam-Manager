@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Exam Manager — Admin Dashboard</title>
+    <meta name="description"
+        content="AI-powered examination management system with automated scheduling, invigilator assignment, and inventory tracking.">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<body>
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">
+                <i class="fas fa-brain"></i>
+                <span>AI EXAM<br>MANAGER</span>
+            </div>
+            <button class="sidebar-toggle" id="sidebarToggle"><i class="fas fa-bars"></i></button>
+        </div>
+        <nav class="sidebar-nav">
+            <a class="nav-item active" data-section="dashboard"><i
+                    class="fas fa-chart-pie"></i><span>Dashboard</span></a>
+            <a class="nav-item" data-section="invigilators"><i
+                    class="fas fa-user-shield"></i><span>Invigilators</span></a>
+            <a class="nav-item" data-section="rooms"><i class="fas fa-door-open"></i><span>Rooms</span></a>
+            <a class="nav-item" data-section="subjects"><i class="fas fa-book"></i><span>Subjects</span></a>
+            <a class="nav-item" data-section="students"><i class="fas fa-graduation-cap"></i><span>Students</span></a>
+            <a class="nav-item" data-section="generator"><i class="fas fa-wand-magic-sparkles"></i><span>AI Exam
+                    Generator</span></a>
+            <a class="nav-item" data-section="exams"><i class="fas fa-calendar-check"></i><span>Sessions</span></a>
+            <a class="nav-item" data-section="seating"><i class="fas fa-chair"></i><span>Seating Chart</span></a>
+            <a class="nav-item" data-section="duties"><i class="fas fa-clipboard-list"></i><span>Duty List</span></a>
+            <a class="nav-item" data-section="inventory"><i class="fas fa-boxes-stacked"></i><span>Inventory</span></a>
+            <a class="nav-item" data-section="restocks"><i class="fas fa-truck-loading"></i><span>Restock
+                    Requests</span></a>
+            <a class="nav-item" data-section="branches"><i class="fas fa-sitemap"></i><span>Branches</span></a>
+            <a class="nav-item" data-section="staffduties"><i class="fas fa-user-tie"></i><span>Staff Duties</span></a>
+            <a class="nav-item" data-section="emergency"><i
+                    class="fas fa-triangle-exclamation"></i><span>Emergency</span></a>
+            <a class="nav-item" data-section="audit"><i class="fas fa-scroll"></i><span>Audit Log</span></a>
+            <a class="nav-item" data-section="settings"><i class="fas fa-gear"></i><span>Settings</span></a>
+        </nav>
+        <div class="sidebar-footer">
+            <a href="/logout" class="nav-item logout"><i class="fas fa-sign-out-alt"></i><span>Logout</span></a>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content" id="mainContent">
+        <header class="top-header">
+            <div class="header-left">
+                <button class="mobile-toggle" id="mobileToggle"><i class="fas fa-bars"></i></button>
+                <h2 id="pageTitle">Dashboard</h2>
+            </div>
+            <div class="header-right">
+                <div class="header-badge" id="healthBadge" title="Resource Health">
+                    <i class="fas fa-heart-pulse"></i> <span id="healthScore">--</span>%
+                </div>
+                <div class="header-user">
+                    <i class="fas fa-shield-halved"></i> Admin
+                </div>
+            </div>
+        </header>
+
+        <div class="content-area" id="contentArea">
+            <!-- Sections rendered dynamically by app.js -->
+        </div>
+    </main>
+
+    <!-- Import Modal -->
+    <div class="modal-overlay" id="importModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-file-import"></i> Import Data</h3>
+                <button class="modal-close" onclick="closeImportModal()"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-desc">Upload an Excel file (.xlsx) to import data. <a href="#"
+                        id="downloadTemplateLink">Download template</a></p>
+                <div class="drop-zone" id="dropZone">
+                    <i class="fas fa-cloud-arrow-up"></i>
+                    <p>Drag & drop your Excel file here</p>
+                    <span>or click to browse</span>
+                    <input type="file" id="importFileInput" accept=".xlsx,.xls" style="display:none">
+                </div>
+                <div id="importStatus" class="import-status" style="display:none"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+                <button class="btn btn-primary" id="importBtn" onclick="processImport()" disabled>
+                    <i class="fas fa-upload"></i> Import
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Modal -->
+    <div class="modal-overlay" id="confirmModal">
+        <div class="modal modal-sm">
+            <div class="modal-header">
+                <h3 id="confirmTitle">Confirm</h3>
+                <button class="modal-close" onclick="closeConfirmModal()"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p id="confirmMessage"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeConfirmModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirmBtn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Exam Manager — Staff Portal</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh
+        }
+
+        .header {
+            background: rgba(30, 41, 59, 0.9);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+            padding: 16px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px
+        }
+
+        .header-left i.logo {
+            font-size: 28px;
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent
+        }
+
+        .header-left h1 {
+            font-size: 20px;
+            font-weight: 700
+        }
+
+        .header-left h1 span {
+            color: #f59e0b
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px
+        }
+
+        .header-right .user-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #f59e0b
+        }
+
+        .header-right a {
+            color: #94a3b8;
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            transition: all 0.2s;
+            font-size: 13px
+        }
+
+        .header-right a:hover {
+            background: rgba(239, 68, 68, 0.1);
+            color: #ef4444
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 32px 24px
+        }
+
+        .welcome-card {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(217, 119, 6, 0.05));
+            border: 1px solid rgba(245, 158, 11, 0.15);
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 28px
+        }
+
+        .welcome-card h2 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 6px
+        }
+
+        .welcome-card p {
+            color: #94a3b8;
+            font-size: 14px
+        }
+
+        .action-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            flex-wrap: wrap
+        }
+
+        .action-btn {
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            background: rgba(30, 41, 59, 0.6);
+            color: #e2e8f0;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none
+        }
+
+        .action-btn:hover {
+            background: rgba(245, 158, 11, 0.1);
+            border-color: rgba(245, 158, 11, 0.3)
+        }
+
+        .action-btn.active {
+            background: rgba(245, 158, 11, 0.15);
+            border-color: #f59e0b;
+            color: #f59e0b
+        }
+
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px
+        }
+
+        .section-title i {
+            color: #f59e0b
+        }
+
+        .duty-card {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 12px;
+            transition: all 0.2s
+        }
+
+        .duty-card:hover {
+            border-color: rgba(245, 158, 11, 0.3);
+            transform: translateY(-1px)
+        }
+
+        .duty-card .duty-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px
+        }
+
+        .duty-card .duty-title {
+            font-weight: 600;
+            font-size: 15px
+        }
+
+        .duty-card .duty-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase
+        }
+
+        .duty-card .duty-status.pending {
+            background: rgba(245, 158, 11, 0.15);
+            color: #fbbf24
+        }
+
+        .duty-card .duty-status.done {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981
+        }
+
+        .duty-card .duty-details {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 12px
+        }
+
+        .duty-card .duty-detail {
+            font-size: 13px;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            gap: 6px
+        }
+
+        .duty-card .duty-detail i {
+            color: #64748b;
+            width: 16px;
+            text-align: center;
+            font-size: 12px
+        }
+
+        .attend-btn {
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: none;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            align-items: center;
+            gap: 8px
+        }
+
+        .attend-btn.mark {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: #fff
+        }
+
+        .attend-btn.mark:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3)
+        }
+
+        .attend-btn.marked {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+            cursor: default
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #64748b
+        }
+
+        .empty-state i {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.4
+        }
+
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 500;
+            z-index: 9999;
+            animation: slideIn 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px
+        }
+
+        .toast.success {
+            background: rgba(16, 185, 129, 0.9);
+            color: #fff
+        }
+
+        .toast.error {
+            background: rgba(239, 68, 68, 0.9);
+            color: #fff
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1
+            }
+        }
+
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px
+        }
+
+        .stat-mini {
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+            border-radius: 12px;
+            padding: 16px;
+            text-align: center
+        }
+
+        .stat-mini .stat-num {
+            font-size: 28px;
+            font-weight: 700;
+            color: #f59e0b
+        }
+
+        .stat-mini .stat-label {
+            font-size: 11px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 4px
+        }
+    </style>
+</head>
+
+<body>
+    <header class="header">
+        <div class="header-left">
+            <i class="fas fa-brain logo"></i>
+            <h1><span>AI</span> EXAM MANAGER</h1>
+        </div>
+        <div class="header-right">
+            <div class="user-badge"><i class="fas fa-user-tie"></i> Staff Portal</div>
+            <a href="/api/export/attendance/staff"><i class="fas fa-download"></i> Attendance Sheet</a>
+            <a href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="welcome-card">
+            <h2>Welcome, Staff 👋</h2>
+            <p>View your assigned duties for exam days and mark attendance below.</p>
+        </div>
+
+        <div class="stats-row" id="statsRow"></div>
+
+        <div class="action-bar">
+            <button class="action-btn active" onclick="filterDuties('all')" id="filterAll">
+                <i class="fas fa-list"></i> All Duties
+            </button>
+            <button class="action-btn" onclick="filterDuties('pending')" id="filterPending">
+                <i class="fas fa-clock"></i> Pending
+            </button>
+            <button class="action-btn" onclick="filterDuties('attended')" id="filterAttended">
+                <i class="fas fa-check-circle"></i> Attended
+            </button>
+        </div>
+
+        <div class="section-title"><i class="fas fa-clipboard-list"></i> Your Assigned Duties</div>
+        <div id="dutiesList"></div>
+    </div>
+
+    <script>
+        let allDuties = [];
+        let currentFilter = 'all';
+
+        async function loadDuties() {
+            try {
+                const res = await fetch('/api/staff-duties');
+                allDuties = await res.json();
+                renderStats();
+                renderDuties();
+            } catch (e) {
+                document.getElementById('dutiesList').innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>Could not load duties.</p></div>';
+            }
+        }
+
+        function renderStats() {
+            const total = allDuties.length;
+            const attended = allDuties.filter(d => d.attended).length;
+            const pending = total - attended;
+            const today = new Date().toISOString().split('T')[0];
+            const todayDuties = allDuties.filter(d => d.date === today).length;
+
+            document.getElementById('statsRow').innerHTML = `
+                <div class="stat-mini"><div class="stat-num">${total}</div><div class="stat-label">Total Duties</div></div>
+                <div class="stat-mini"><div class="stat-num">${attended}</div><div class="stat-label">Attended</div></div>
+                <div class="stat-mini"><div class="stat-num">${pending}</div><div class="stat-label">Pending</div></div>
+                <div class="stat-mini"><div class="stat-num">${todayDuties}</div><div class="stat-label">Today</div></div>
+            `;
+        }
+
+        function filterDuties(filter) {
+            currentFilter = filter;
+            document.querySelectorAll('.action-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(filter === 'all' ? 'filterAll' : filter === 'pending' ? 'filterPending' : 'filterAttended').classList.add('active');
+            renderDuties();
+        }
+
+        function renderDuties() {
+            let duties = [...allDuties];
+            if (currentFilter === 'pending') duties = duties.filter(d => !d.attended);
+            if (currentFilter === 'attended') duties = duties.filter(d => d.attended);
+
+            const container = document.getElementById('dutiesList');
+            if (!duties.length) {
+                container.innerHTML = '<div class="empty-state"><i class="fas fa-clipboard-check"></i><p>No duties found.</p></div>';
+                return;
+            }
+
+            container.innerHTML = duties.map(d => `
+                <div class="duty-card">
+                    <div class="duty-header">
+                        <span class="duty-title">${d.duty_description || 'Assigned Duty'}</span>
+                        <span class="duty-status ${d.attended ? 'done' : 'pending'}">${d.attended ? 'Attended' : 'Pending'}</span>
+                    </div>
+                    <div class="duty-details">
+                        <div class="duty-detail"><i class="fas fa-user"></i> ${d.staff_name}</div>
+                        <div class="duty-detail"><i class="fas fa-calendar"></i> ${d.date}</div>
+                        <div class="duty-detail"><i class="fas fa-map-marker-alt"></i> ${d.location || 'TBD'}</div>
+                        <div class="duty-detail"><i class="fas fa-clock"></i> ${d.start_time} - ${d.end_time}</div>
+                    </div>
+                    ${!d.attended ? `<button class="attend-btn mark" onclick="markAttended(${d.id})"><i class="fas fa-check"></i> Mark as Attended</button>` : `<div class="attend-btn marked"><i class="fas fa-check-circle"></i> Attended at ${d.check_in_time || '--:--'}</div>`}
+                </div>
+            `).join('');
+        }
+
+        async function markAttended(id) {
+            try {
+                const now = new Date();
+                const time = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+                const res = await fetch(`/api/staff-duties/${id}/attend`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ attended: true, check_in_time: time })
+                });
+                if (res.ok) {
+                    showToast('Attendance marked successfully!', 'success');
+                    loadDuties();
+                }
+            } catch (e) {
+                showToast('Failed to mark attendance', 'error');
+            }
+        }
+
+        function showToast(msg, type) {
+            const t = document.createElement('div');
+            t.className = `toast ${type}`;
+            t.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i> ${msg}`;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 3000);
+        }
+
+        loadDuties();
+    </script>
+</body>
+
+</html>
