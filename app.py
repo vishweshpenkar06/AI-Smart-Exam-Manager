@@ -18,6 +18,7 @@ from ai_engine import (AIExamScheduler, SocialGraphIsolation,
                        SelfHealingEngine, InventoryPredictor)
 from excel_handler import (export_data, import_data, generate_template,
                            export_attendance_sheet)
+from seed_data import seed_all
 
 # ─── App Configuration ────────────────────────────────────────────
 app = Flask(__name__)
@@ -41,7 +42,7 @@ def load_user(user_id):
 
 # ─── Database Initialization ──────────────────────────────────────
 def init_db():
-    """Create tables and seed default users & settings."""
+    """Create tables and seed default users, settings & sample data."""
     db.create_all()
 
     # Seed users if not exist
@@ -71,6 +72,16 @@ def init_db():
             db.session.add(Setting(key=key, value=value))
 
     db.session.commit()
+
+    # ── Seed sample data for all sections (only if tables are empty) ──
+    models = {
+        'Branch': Branch, 'Invigilator': Invigilator, 'Room': Room,
+        'Subject': Subject, 'Student': Student, 'InventoryItem': InventoryItem,
+        'StaffDuty': StaffDuty, 'Exam': Exam,
+    }
+    seed_summary = seed_all(db, models)
+    if seed_summary:
+        print(f'[SEED] Sample data loaded: {seed_summary}')
 
 
 def log_action(action, details='', user='System', log_type='info'):
@@ -1080,40 +1091,104 @@ def import_excel(section):
 
     # Save imported data
     count = 0
-    model_map = {
-        'invigilators': Invigilator,
-        'rooms': Room,
-        'subjects': Subject,
-        'students': Student,
-        'inventory': InventoryItem,
-        'branches': Branch,
-        'staff_duties': StaffDuty,
+    # Map sections to corresponding models and matching database fields for deduplication
+    config = {
+        'invigilators': {'model': Invigilator, 'match': 'name'},
+        'rooms': {'model': Room, 'match': 'name'},
+        'subjects': {'model': Subject, 'match': 'name'},
+        'students': {'model': Student, 'match': 'roll_no'},
+        'inventory': {'model': InventoryItem, 'match': 'name'},
+        'branches': {'model': Branch, 'match': 'name'},
+        'staff_duties': {'model': StaffDuty, 'match': 'staff_name', 'additional': ['date', 'location']},
+        'exams': {'model': Exam},
+        'attendance': {'model': None}
     }
 
-    model = model_map.get(section)
-    if not model:
+    if section not in config:
         return jsonify({'error': f'Unknown section: {section}'}), 400
 
+    count = 0
+    updates = 0
+    
     for item in data:
         try:
-            if section == 'students':
-                existing = Student.query.filter_by(roll_no=item.get('roll_no', '')).first()
+            # --- SPECIAL HANDLING: ATTENDANCE IMPORT ---
+            if section == 'attendance':
+                inv = Invigilator.query.filter_by(name=item.get('name')).first()
+                date_str = item.get('date')
+                if inv:
+                    duty = DutyAssignment.query.filter_by(invigilator_id=inv.id, date=date_str).first()
+                    if duty:
+                        duty.attended = item.get('attended', False)
+                        duty.check_in_time = item.get('check_in_time', '')
+                        updates += 1
+                        continue
+                
+                staff_duty = StaffDuty.query.filter_by(staff_name=item.get('name'), date=date_str).first()
+                if staff_duty:
+                    staff_duty.attended = item.get('attended', False)
+                    staff_duty.check_in_time = item.get('check_in_time', '')
+                    updates += 1
+                continue
+
+            # --- SPECIAL HANDLING: EXAMS ---
+            if section == 'exams':
+                subject = Subject.query.filter_by(name=item.get('subject_name', '')).first()
+                room = Room.query.filter_by(name=item.get('room_name', '')).first()
+                if not subject: continue
+                
+                existing = Exam.query.filter_by(
+                    subject_id=subject.id, date=item.get('date', ''),
+                    start_time=item.get('start_time', '')
+                ).first()
+                
                 if existing:
-                    for k, v in item.items():
-                        setattr(existing, k, v)
-                    continue
-            obj = model(**item)
-            db.session.add(obj)
-            count += 1
+                    existing.room_id = room.id if room else existing.room_id
+                    existing.session_label = item.get('session_label', existing.session_label)
+                    existing.status = item.get('status', existing.status)
+                    updates += 1
+                else:
+                    obj = Exam(
+                        subject_id=subject.id, room_id=room.id if room else None,
+                        date=item.get('date', ''), start_time=item.get('start_time', ''),
+                        end_time=item.get('end_time', ''),
+                        session_label=item.get('session_label', 'Morning'),
+                        status=item.get('status', 'scheduled')
+                    )
+                    db.session.add(obj)
+                    count += 1
+                continue
+
+            # --- GENERAL DEDUPLICATION HANDLING ---
+            model_info = config[section]
+            model_class = model_info['model']
+            match_field = model_info['match']
+            
+            # Build filter for deduplication
+            filters = {match_field: item.get(match_field)}
+            for add_field in model_info.get('additional', []):
+                filters[add_field] = item.get(add_field)
+            
+            existing = model_class.query.filter_by(**filters).first()
+            if existing:
+                for k, v in item.items():
+                    setattr(existing, k, v)
+                updates += 1
+            else:
+                obj = model_class(**item)
+                db.session.add(obj)
+                count += 1
+
         except Exception as e:
+            print(f"[IMPORT ERROR] {str(e)}")
             continue
 
     db.session.commit()
     log_action(f'Import {section.title()}',
-               f'Imported {count} records from Excel',
+               f'Processed {len(data)} rows ({count} new, {updates} updated)',
                current_user.username, 'import')
 
-    return jsonify({'success': True, 'imported': count, 'total': len(data)})
+    return jsonify({'success': True, 'imported': count, 'updated': updates, 'total': len(data)})
 
 
 @app.route('/api/export/<section>', methods=['GET'])

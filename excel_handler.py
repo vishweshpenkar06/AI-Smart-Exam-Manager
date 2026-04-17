@@ -198,6 +198,13 @@ def _parse_row(section, row, columns):
         except (IndexError, TypeError):
             return default
 
+    def safe_int(val, default=0):
+        try:
+            if val is None or str(val).strip() == '': return default
+            return int(float(str(val).strip()))
+        except (ValueError, TypeError):
+            return default
+
     if section == 'invigilators':
         name = str(safe_get(0, '')).strip()
         if not name:
@@ -207,9 +214,9 @@ def _parse_row(section, row, columns):
             'email': str(safe_get(1, '')).strip(),
             'phone': str(safe_get(2, '')).strip(),
             'department': str(safe_get(3, '')).strip(),
-            'available': str(safe_get(4, 'Yes')).strip().lower() in ('yes', 'true', '1', 'y'),
-            'max_duties': int(safe_get(5, 5)) if safe_get(5) else 5,
-            'group_id': int(safe_get(6, 0)) if safe_get(6) else 0,
+            'available': str(safe_get(4, 'Yes')).strip().lower() in ('yes', 'true', '1', 'y', '✓'),
+            'max_duties': safe_int(safe_get(5), 5),
+            'group_id': safe_int(safe_get(6), 0),
         }
 
     elif section == 'rooms':
@@ -218,12 +225,12 @@ def _parse_row(section, row, columns):
             return None
         return {
             'name': name,
-            'capacity': int(safe_get(1, 30)) if safe_get(1) else 30,
+            'capacity': safe_int(safe_get(1), 30),
             'floor': str(safe_get(2, 'Ground')).strip(),
             'room_type': str(safe_get(3, 'Classroom')).strip(),
-            'is_available': str(safe_get(4, 'Yes')).strip().lower() in ('yes', 'true', '1', 'y'),
+            'is_available': str(safe_get(4, 'Yes')).strip().lower() in ('yes', 'true', '1', 'y', '✓'),
             'equipment': str(safe_get(5, '')).strip(),
-            'buffer_seats': int(safe_get(6, 5)) if safe_get(6) else 5,
+            'buffer_seats': safe_int(safe_get(6), 5),
         }
 
     elif section == 'subjects':
@@ -234,7 +241,7 @@ def _parse_row(section, row, columns):
             'name': name,
             'code': str(safe_get(1, '')).strip(),
             'branch': str(safe_get(2, '')).strip(),
-            'student_count': int(safe_get(3, 0)) if safe_get(3) else 0,
+            'student_count': safe_int(safe_get(3), 0),
             'color': str(safe_get(4, '#4A90D9')).strip(),
         }
 
@@ -246,7 +253,7 @@ def _parse_row(section, row, columns):
             'name': name,
             'roll_no': str(safe_get(1, '')).strip(),
             'branch': str(safe_get(2, '')).strip(),
-            'group_id': int(safe_get(3, 0)) if safe_get(3) else 0,
+            'group_id': safe_int(safe_get(3), 0),
             'email': str(safe_get(4, '')).strip(),
             'phone': str(safe_get(5, '')).strip(),
         }
@@ -258,8 +265,8 @@ def _parse_row(section, row, columns):
         return {
             'name': name,
             'category': str(safe_get(1, 'General')).strip(),
-            'quantity': int(safe_get(2, 0)) if safe_get(2) else 0,
-            'min_threshold': int(safe_get(3, 10)) if safe_get(3) else 10,
+            'quantity': safe_int(safe_get(2), 0),
+            'min_threshold': safe_int(safe_get(3), 10),
             'unit': str(safe_get(4, 'pcs')).strip(),
         }
 
@@ -271,7 +278,7 @@ def _parse_row(section, row, columns):
             'name': name,
             'code': str(safe_get(1, '')).strip(),
             'color': str(safe_get(2, '#4A90D9')).strip(),
-            'student_count': int(safe_get(3, 0)) if safe_get(3) else 0,
+            'student_count': safe_int(safe_get(3), 0),
         }
 
     elif section == 'staff_duties':
@@ -285,6 +292,32 @@ def _parse_row(section, row, columns):
             'date': str(safe_get(3, '')).strip(),
             'start_time': str(safe_get(4, '09:00')).strip(),
             'end_time': str(safe_get(5, '17:00')).strip(),
+        }
+
+    elif section == 'exams':
+        subject_name = str(safe_get(0, '')).strip()
+        if not subject_name:
+            return None
+        return {
+            'subject_name': subject_name,
+            'room_name': str(safe_get(1, '')).strip(),
+            'date': str(safe_get(2, '')).strip(),
+            'start_time': str(safe_get(3, '09:00')).strip(),
+            'end_time': str(safe_get(4, '12:00')).strip(),
+            'session_label': str(safe_get(5, 'Morning')).strip(),
+            'status': str(safe_get(6, 'scheduled')).strip(),
+        }
+
+    elif section == 'attendance':
+        # Custom parser for Attendance Sheet Import
+        name = str(safe_get(1, '')).strip() # Column 2 in Attendance Sheet
+        if not name: return None
+        return {
+            'name': name,
+            'room_or_duty': str(safe_get(2, '')).strip(),
+            'date': str(safe_get(3, '')).strip(),
+            'attended': str(safe_get(5, '')).strip() == '✓',
+            'check_in_time': str(safe_get(6, '')).strip()
         }
 
     return None
@@ -362,6 +395,12 @@ def _get_examples(section):
             ['Rajesh Kumar', 'Hall Arrangement', 'Exam Hall A', '2026-03-20', '08:00', '17:00'],
             ['Priya Sharma', 'Stationery Distribution', 'Office', '2026-03-20', '08:30', '12:00'],
             ['Amit Patel', 'Student Guidance', 'Main Entrance', '2026-03-20', '08:00', '09:30'],
+        ]
+    elif section == 'exams':
+        return [
+            ['Data Structures', 'Hall A', '2026-04-20', '09:00', '12:00', 'Morning', 'scheduled'],
+            ['Operating Systems', 'Room 101', '2026-04-20', '14:00', '17:00', 'Afternoon', 'scheduled'],
+            ['Digital Electronics', 'Hall B', '2026-04-21', '09:00', '12:00', 'Morning', 'scheduled'],
         ]
     return []
 
