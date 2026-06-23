@@ -5,11 +5,20 @@ and AI-powered intelligence.
 """
 import os
 import json
+import time
+import shutil
+import secrets
+import io
 from datetime import datetime
 from flask import (Flask, render_template, request, jsonify, redirect,
-                   url_for, flash, send_file, session)
+                   url_for, flash, send_file, session, g)
 from flask_login import (LoginManager, login_user, logout_user,
                          login_required, current_user)
+from flask_wtf.csrf import CSRFProtect, CSRFError
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from werkzeug.utils import secure_filename
+from sqlalchemy.orm import joinedload
 from models import (db, User, Invigilator, Room, Subject, Student, Exam,
                     SeatingAssignment, DutyAssignment, InventoryItem,
                     RestockRequest, Branch, EmergencyLog, AuditLog,
@@ -18,18 +27,64 @@ from ai_engine import (AIExamScheduler, SocialGraphIsolation,
                        SelfHealingEngine, InventoryPredictor)
 from excel_handler import (export_data, import_data, generate_template,
                            export_attendance_sheet)
-from seed_data import seed_all
+from pdf_handler import export_exams_pdf, export_attendance_pdf
+from seed_data import seed_all
+from logger_setup import setup_logging
+from config import config as app_config
+from exceptions import AppException, ValidationError
+
+# ─── Load Environment Variables ───────────────────────────────────
+from dotenv import load_dotenv
+load_dotenv()
 
 # ─── App Configuration ────────────────────────────────────────────
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'ai-exam-manager-secret-2026'
+env_name = os.getenv('FLASK_ENV', 'development')
+app.config.from_object(app_config[env_name])
 basedir = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(basedir, 'exam_manager.db')}"
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_DATABASE_URI'] = (
+    os.getenv('DATABASE_URL') or f"sqlite:///{os.path.join(basedir, 'exam_manager.db')}"
+)
 app.config['UPLOAD_FOLDER'] = os.path.join(basedir, 'static', 'uploads')
 
 db.init_app(app)
 
+# ─── Security Extensions ──────────────────────────────────────────
+csrf = CSRFProtect()
+csrf.init_app(app)
+
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["500 per day", "100 per hour"],
+    storage_uri="memory://"
+)
+
+# ─── Logging Setup ────────────────────────────────────────────────
+setup_logging(app)
+
+# ─── File Upload Settings ─────────────────────────────────────────
+ALLOWED_EXTENSIONS = {'xlsx', 'xls', 'csv'}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+def allowed_file(filename):
+    """Check if file extension is permitted."""
+    return (
+        '.' in filename and
+        filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    )
+
+
+def validate_file_size(file):
+    """Return True if file is within the 10MB limit."""
+    file.seek(0, 2)        # Seek to end
+    size = file.tell()
+    file.seek(0)           # Reset to start
+    return size <= MAX_FILE_SIZE
+
+
+# ─── Login Manager ────────────────────────────────────────────────
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -40,18 +95,120 @@ def load_user(user_id):
     return db.session.get(User, int(user_id))
 
 
+# ─── Security Headers ───────────────────────────────────────────────
+@app.after_request
+def set_security_headers(response):
+    """Add security headers to every response."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
+
+
+# ─── Request / Response Logging ────────────────────────────────────────
+@app.before_request
+def before_request_hook():
+    """Record request start time."""
+    g.start_time = time.time()
+
+
+@app.after_request
+def log_response(response):
+    """Log each request with method, path, status and duration."""
+    elapsed = time.time() - g.get('start_time', time.time())
+    app.logger.info(
+        f'{request.method} {request.path} {response.status_code} '
+        f'{elapsed:.3f}s ip={request.remote_addr}'
+    )
+    return response
+
+
+# ─── Error Handlers ─────────────────────────────────────────────────
+@app.errorhandler(AppException)
+def handle_app_exception(error):
+    return jsonify(error.to_dict()), error.status_code
+
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(error):
+    app.logger.warning(f'CSRF error: {error.description}')
+    return jsonify({'status': 'error', 'message': 'CSRF token invalid or missing'}), 400
+
+
+@app.errorhandler(400)
+def bad_request(error):
+    return jsonify({'status': 'error', 'message': 'Bad request'}), 400
+
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'status': 'error', 'message': 'Resource not found'}), 404
+
+
+@app.errorhandler(429)
+def rate_limited(error):
+    return jsonify({'status': 'error', 'message': 'Too many requests. Please slow down.'}), 429
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    db.session.rollback()
+    app.logger.error(f'Internal server error: {error}')
+    return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
+
+
+# ─── Health Check ──────────────────────────────────────────────────
+@app.route('/health')
+def health_check():
+    """Health check endpoint for monitoring and container liveness probes."""
+    try:
+        db.session.execute(db.text('SELECT 1'))
+        return jsonify({
+            'status': 'healthy',
+            'database': 'connected',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'database': 'disconnected',
+            'error': str(e)
+        }), 503
+
+
 # ─── Database Initialization ──────────────────────────────────────
 def init_db():
     """Create tables and seed default users, settings & sample data."""
     db.create_all()
 
+    # ⭐ ONE-TIME PASSWORD MIGRATION (for existing plaintext passwords)
+    migration_needed = Setting.query.filter_by(key='passwords_hashed').first()
+    if not migration_needed:
+        app.logger.info('[MIGRATION] Hashing existing plaintext passwords...')
+        for user in User.query.all():
+            if user.password and len(user.password) < 60:  # plaintext indicator
+                try:
+                    user.set_password(user.password)
+                except:
+                    pass  # Skip if already hashed
+        db.session.add(Setting(key='passwords_hashed', value='true'))
+        db.session.commit()
+        app.logger.info('[MIGRATION] Password hashing complete!')
+
     # Seed users if not exist
     if not User.query.filter_by(username='AdminPro').first():
-        db.session.add(User(username='AdminPro', password='admin@123', role='admin'))
+        user = User(username='AdminPro', role='admin', email='admin@college.edu', is_active=True)
+        user.set_password('admin@123')
+        db.session.add(user)
     if not User.query.filter_by(username='Teacher').first():
-        db.session.add(User(username='Teacher', password='teacher@456', role='teacher'))
+        user = User(username='Teacher', role='teacher', email='teacher@college.edu', is_active=True)
+        user.set_password('teacher@456')
+        db.session.add(user)
     if not User.query.filter_by(username='Staff').first():
-        db.session.add(User(username='Staff', password='staff@789', role='staff'))
+        user = User(username='Staff', role='staff', email='staff@college.edu', is_active=True)
+        user.set_password('staff@789')
+        db.session.add(user)
 
     # Seed default settings
     defaults = {
@@ -85,10 +242,21 @@ def init_db():
 
 
 def log_action(action, details='', user='System', log_type='info'):
-    """Add entry to audit log."""
+    """Add entry to audit log and emit to structured app logger."""
     entry = AuditLog(action=action, details=details, user=user, log_type=log_type)
     db.session.add(entry)
     db.session.commit()
+
+    # Mirror to app logger at the appropriate level
+    log_fn = {
+        'info': app.logger.info,
+        'warning': app.logger.warning,
+        'error': app.logger.error,
+        'security': app.logger.warning,
+        'auth': app.logger.info,
+        'emergency': app.logger.warning,
+    }.get(log_type, app.logger.info)
+    log_fn(f'[AUDIT] {action} | user={user} | {details}')
 
 
 # ─── Authentication Routes ────────────────────────────────────────
@@ -105,21 +273,58 @@ def index():
 
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")
 def login():
     if request.method == 'POST':
         data = request.get_json() if request.is_json else request.form
-        username = data.get('username', '')
+        username = data.get('username', '').strip()
         password = data.get('password', '')
 
+        # Input validation
+        if not username or not password:
+            msg = 'Username and password are required'
+            if request.is_json:
+                return jsonify({'success': False, 'message': msg}), 400
+            flash(msg)
+            return render_template('login.html')
+
         user = User.query.filter_by(username=username).first()
+
+        # Account locked check
+        if user and user.is_locked():
+            msg = 'Account locked due to too many failed attempts. Try again later.'
+            app.logger.warning(f'Login attempt on locked account: {username}')
+            if request.is_json:
+                return jsonify({'success': False, 'message': msg}), 429
+            flash(msg)
+            return render_template('login.html')
+
+        # Active account check
+        if user and not user.is_active:
+            msg = 'This account has been deactivated.'
+            if request.is_json:
+                return jsonify({'success': False, 'message': msg}), 401
+            flash(msg)
+            return render_template('login.html')
+
+        # Verify credentials
         if user and user.check_password(password):
+            # Reset lockout on successful login
+            user.failed_login_attempts = 0
+            user.locked_until = None
+            user.last_login = datetime.utcnow()
+            db.session.commit()
+
             login_user(user)
+            app.logger.info(f'Successful login: {username} (role={user.role})')
             log_action('Login', f'{username} logged in', username, 'auth')
 
             if request.is_json:
-                redirect_url = url_for('admin_dashboard') if user.role == 'admin' else \
-                               url_for('teacher_portal') if user.role == 'teacher' else \
-                               url_for('staff_portal')
+                redirect_url = (
+                    url_for('admin_dashboard') if user.role == 'admin' else
+                    url_for('teacher_portal') if user.role == 'teacher' else
+                    url_for('staff_portal')
+                )
                 return jsonify({'success': True, 'redirect': redirect_url, 'role': user.role})
 
             if user.role == 'admin':
@@ -129,9 +334,29 @@ def login():
             else:
                 return redirect(url_for('staff_portal'))
 
+        # Failed login — track attempts
+        if user:
+            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+            if user.failed_login_attempts >= 5:
+                user.lock_account(30)
+                app.logger.warning(
+                    f'Account locked after 5 failed attempts: {username}'
+                )
+                log_action(
+                    'Account Locked',
+                    f'{username} locked for 30 minutes after repeated failures',
+                    'System', 'security'
+                )
+            db.session.commit()
+
+        app.logger.warning(
+            f'Failed login attempt for "{username}" from {request.remote_addr}'
+        )
+        log_action('Login Failed', f'Failed attempt for {username}', 'System', 'security')
+        msg = 'Invalid username or password'
         if request.is_json:
-            return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
-        flash('Invalid credentials')
+            return jsonify({'success': False, 'message': msg}), 401
+        flash(msg)
     return render_template('login.html')
 
 
@@ -200,8 +425,11 @@ def get_stats():
         'colors': [s.color for s in subjects]
     }
 
-    # Chart data: exams by date
-    exams = Exam.query.all()
+    # Chart data: exams by date (eager load with relationships)
+    exams = Exam.query.options(
+        joinedload(Exam.subject),
+        joinedload(Exam.room)
+    ).all()
     from collections import Counter
     date_counts = Counter(e.date for e in exams)
     sorted_dates = sorted(date_counts.keys())
@@ -482,6 +710,15 @@ def generate_exams():
     sessions_per_day = data.get('sessions_per_day', 2)
     subject_ids = data.get('subject_ids', [])
 
+    # Clear existing exams, seating and duties before generating new ones
+    SeatingAssignment.query.delete()
+    DutyAssignment.query.delete()
+    Exam.query.delete()
+    # Reset invigilator duty counts
+    for inv in Invigilator.query.all():
+        inv.duty_count = 0
+    db.session.commit()
+
     # Get settings
     settings = {s.key: s.value for s in Setting.query.all()}
 
@@ -597,8 +834,26 @@ def generate_exams():
 @app.route('/api/exams', methods=['GET'])
 @login_required
 def get_exams():
-    exams = Exam.query.order_by(Exam.date, Exam.start_time).all()
-    return jsonify([e.to_dict() for e in exams])
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    per_page = min(per_page, 200)  # Max 200 per page for better dropdown support
+
+    paginated = Exam.query.options(
+        joinedload(Exam.subject),
+        joinedload(Exam.room)
+    ).order_by(Exam.date, Exam.start_time).paginate(
+        page=page,
+        per_page=per_page,
+        error_out=False
+    )
+
+    return jsonify({
+        'total': paginated.total,
+        'page': page,
+        'per_page': per_page,
+        'pages': paginated.pages,
+        'data': [e.to_dict() for e in paginated.items]
+    })
 
 
 @app.route('/api/exams/<int:eid>', methods=['DELETE'])
@@ -1079,13 +1334,26 @@ def update_settings():
 @login_required
 def import_excel(section):
     if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
+        return jsonify({'error': 'No file provided'}), 400
 
     file = request.files['file']
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        return jsonify({'error': 'Please upload an Excel file (.xlsx)'}), 400
 
-    data, error = import_data(section, file.stream)
+    # Validate file type
+    if not file or not allowed_file(file.filename):
+        app.logger.warning(f'Invalid file upload attempt: {file.filename}')
+        return jsonify({'error': 'Invalid file type. Use Excel files only (.xlsx, .xls, .csv)'}), 400
+
+    # Validate file size
+    if not validate_file_size(file):
+        app.logger.warning(f'File too large: {file.filename}')
+        return jsonify({'error': 'File too large. Maximum 10MB allowed.'}), 413
+
+    # Secure filename
+    filename = secure_filename(file.filename)
+    filename = f"{secrets.token_hex(4)}_{filename}"
+
+    file_bytes = io.BytesIO(file.read())
+    data, error = import_data(section, file_bytes)
     if error:
         return jsonify({'error': error}), 400
 
@@ -1180,7 +1448,9 @@ def import_excel(section):
                 count += 1
 
         except Exception as e:
-            print(f"[IMPORT ERROR] {str(e)}")
+            app.logger.error(f"[IMPORT ERROR] Section: {section}, Error: {str(e)}")
+            import traceback
+            app.logger.error(traceback.format_exc())
             continue
 
     db.session.commit()
@@ -1229,6 +1499,34 @@ def export_excel(section):
     )
 
 
+@app.route('/api/export/<section>/pdf', methods=['GET'])
+@login_required
+def export_pdf(section):
+    if section != 'exams':
+        return jsonify({'error': 'PDF export only available for exams currently'}), 400
+
+    from sqlalchemy.orm import joinedload
+    items = Exam.query.options(joinedload(Exam.subject), joinedload(Exam.room)).order_by(Exam.date, Exam.start_time).all()
+    data = [i.to_dict() for i in items]
+    
+    if not data:
+        return jsonify({'error': 'No exams found to export. Please generate a timetable first.'}), 400
+
+    log_action('Export Exams PDF', f'Exported {len(data)} records to PDF', current_user.username, 'export')
+
+    filename = f'AI_Exam_Manager_Exams_{datetime.now().strftime("%Y%m%d")}.pdf'
+    output = export_exams_pdf(data)
+    if not output:
+        return jsonify({'error': 'Export failed'}), 500
+
+    return send_file(
+        output,
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename
+    )
+
+
 @app.route('/api/template/<section>', methods=['GET'])
 @login_required
 def download_template(section):
@@ -1264,6 +1562,30 @@ def export_attendance(role):
     return send_file(
         output,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
+    )
+
+
+@app.route('/api/export/attendance/<role>/pdf', methods=['GET'])
+@login_required
+def export_attendance_pdf_route(role):
+    if role == 'teacher':
+        duties = DutyAssignment.query.all()
+        data = [d.to_dict() for d in duties]
+        title = 'Invigilator Duty Attendance'
+    elif role == 'staff':
+        duties = StaffDuty.query.all()
+        data = [d.to_dict() for d in duties]
+        title = 'Staff Duty Attendance'
+    else:
+        return jsonify({'error': 'Invalid role'}), 400
+
+    output = export_attendance_pdf(data, title)
+    filename = f'AI_Exam_Manager_{role}_attendance_{datetime.now().strftime("%Y%m%d")}.pdf'
+    return send_file(
+        output,
+        mimetype='application/pdf',
         as_attachment=True,
         download_name=filename
     )
@@ -1329,6 +1651,85 @@ def ai_suggest():
         suggestions.append({'type': 'info', 'message': 'No specific AI suggestions at this time.'})
 
     return jsonify({'suggestions': suggestions})
+
+
+# ─── Administrative and Backup API ────────────────────────────────
+@app.route('/admin/backup', methods=['POST'])
+@login_required
+def backup_database():
+    """Create a database backup."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Admin only'}), 403
+
+    try:
+        if not os.path.exists('backups'):
+            os.mkdir('backups')
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = f'backups/exam_manager_{timestamp}.db'
+        shutil.copy2('exam_manager.db', backup_path)
+
+        app.logger.info(f'Database backed up: {backup_path}')
+        log_action('Database Backup', f'Backup created: {backup_path}', current_user.username, 'info')
+
+        return jsonify({'status': 'success', 'backup_file': backup_path})
+    except Exception as e:
+        app.logger.error(f'Backup failed: {e}')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/restore/<backup_name>', methods=['POST'])
+@login_required
+def restore_backup(backup_name):
+    """Restore from a backup point."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Admin only'}), 403
+
+    try:
+        backup_path = f'backups/{backup_name}'
+        if not os.path.exists(backup_path):
+            return jsonify({'error': 'Backup not found'}), 404
+
+        # Create safety backup first
+        safety_backup = f'backups/safety_{int(datetime.now().timestamp())}.db'
+        shutil.copy2('exam_manager.db', safety_backup)
+
+        # Restore
+        shutil.copy2(backup_path, 'exam_manager.db')
+
+        app.logger.info(f'Database restored from: {backup_path}')
+        log_action('Database Restore', f'Restored from: {backup_path}', current_user.username, 'security')
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Database restored',
+            'safety_backup': safety_backup
+        })
+    except Exception as e:
+        app.logger.error(f'Restore failed: {e}')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/backups', methods=['GET'])
+@login_required
+def list_backups():
+    """List available backups."""
+    if current_user.role != 'admin':
+        return jsonify({'error': 'Admin only'}), 403
+
+    if not os.path.exists('backups'):
+        return jsonify({'backups': []})
+
+    backups = []
+    for f in os.listdir('backups'):
+        path = os.path.join('backups', f)
+        backups.append({
+            'filename': f,
+            'size_mb': round(os.path.getsize(path) / (1024 * 1024), 2),
+            'created': datetime.fromtimestamp(os.path.getctime(path)).isoformat()
+        })
+
+    return jsonify({'backups': sorted(backups, key=lambda x: x['created'], reverse=True)})
 
 
 # ─── App Entry Point ──────────────────────────────────────────────

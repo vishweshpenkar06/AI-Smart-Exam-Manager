@@ -5,6 +5,7 @@ All SQLAlchemy models for persistent storage.
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
 
 db = SQLAlchemy()
 
@@ -12,12 +13,36 @@ db = SQLAlchemy()
 class User(UserMixin, db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(200), nullable=False)
+    username = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    password = db.Column(db.String(256), nullable=False)
     role = db.Column(db.String(20), nullable=False)  # admin, teacher, staff
+    email = db.Column(db.String(120), unique=True, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    failed_login_attempts = db.Column(db.Integer, default=0)
+    locked_until = db.Column(db.DateTime, nullable=True)
+    last_login = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def set_password(self, password):
+        """Hash and store the user's password using PBKDF2-SHA256."""
+        if len(password) < 6:
+            raise ValueError("Password must be at least 6 characters")
+        self.password = generate_password_hash(password, method='pbkdf2:sha256')
 
     def check_password(self, password):
-        return self.password == password
+        """Verify a plaintext password against the stored hash."""
+        return check_password_hash(self.password, password)
+
+    def lock_account(self, duration_minutes=30):
+        """Lock the account for the given number of minutes."""
+        from datetime import timedelta
+        self.locked_until = datetime.utcnow() + timedelta(minutes=duration_minutes)
+
+    def is_locked(self):
+        """Return True if the account is currently locked."""
+        if self.locked_until and datetime.utcnow() < self.locked_until:
+            return True
+        return False
 
 
 class Invigilator(db.Model):
@@ -107,14 +132,20 @@ class Student(db.Model):
 class Exam(db.Model):
     __tablename__ = 'exams'
     id = db.Column(db.Integer, primary_key=True)
-    subject_id = db.Column(db.Integer, db.ForeignKey('subjects.id'))
-    room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'))
-    date = db.Column(db.String(20), nullable=False)
+    subject_id = db.Column(db.Integer, db.ForeignKey('subjects.id'), index=True)
+    room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'), index=True)
+    date = db.Column(db.String(20), nullable=False, index=True)
     start_time = db.Column(db.String(10), default='09:00')
     end_time = db.Column(db.String(10), default='12:00')
-    status = db.Column(db.String(20), default='scheduled')
+    status = db.Column(db.String(20), default='scheduled', index=True)
     session_label = db.Column(db.String(40), default='Morning')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # Composite indexes for common query patterns
+    __table_args__ = (
+        db.Index('idx_exam_date_room', 'date', 'room_id'),
+        db.Index('idx_exam_status_date', 'status', 'date'),
+    )
 
     subject = db.relationship('Subject', backref='exams')
     room = db.relationship('Room', backref='exams')
@@ -158,13 +189,19 @@ class SeatingAssignment(db.Model):
 class DutyAssignment(db.Model):
     __tablename__ = 'duty_assignments'
     id = db.Column(db.Integer, primary_key=True)
-    invigilator_id = db.Column(db.Integer, db.ForeignKey('invigilators.id'))
-    exam_id = db.Column(db.Integer, db.ForeignKey('exams.id'))
+    invigilator_id = db.Column(db.Integer, db.ForeignKey('invigilators.id'), index=True)
+    exam_id = db.Column(db.Integer, db.ForeignKey('exams.id'), index=True)
     room_id = db.Column(db.Integer, db.ForeignKey('rooms.id'))
-    date = db.Column(db.String(20), nullable=False)
+    date = db.Column(db.String(20), nullable=False, index=True)
     attended = db.Column(db.Boolean, default=False)
     check_in_time = db.Column(db.String(10), default='')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # Composite indexes for common query patterns
+    __table_args__ = (
+        db.Index('idx_duty_invigilator_date', 'invigilator_id', 'date'),
+        db.Index('idx_duty_exam_attended', 'exam_id', 'attended'),
+    )
 
     invigilator = db.relationship('Invigilator', backref='duties')
     exam = db.relationship('Exam', backref='duties')
@@ -185,14 +222,19 @@ class DutyAssignment(db.Model):
 class InventoryItem(db.Model):
     __tablename__ = 'inventory_items'
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(120), nullable=False)
-    category = db.Column(db.String(60), default='General')
+    name = db.Column(db.String(120), nullable=False, index=True)
+    category = db.Column(db.String(60), default='General', index=True)
     quantity = db.Column(db.Integer, default=0)
     min_threshold = db.Column(db.Integer, default=10)
     unit = db.Column(db.String(20), default='pcs')
     last_updated = db.Column(db.DateTime, default=datetime.utcnow)
     usage_rate = db.Column(db.Float, default=0.0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # Composite index for low-stock queries
+    __table_args__ = (
+        db.Index('idx_inventory_low_stock', 'quantity', 'min_threshold'),
+    )
 
     def to_dict(self):
         return {

@@ -136,7 +136,15 @@ async function processImport() {
     status.style.color = '#93c5fd';
     status.textContent = 'Importing...';
     try {
-        const res = await fetch(`/api/import/${State.importSection}`, { method: 'POST', body: formData });
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        const res = await fetch(`/api/import/${State.importSection}`, { 
+            method: 'POST', 
+            body: formData,
+            headers: { 
+                'X-CSRFToken': csrfToken,
+                'X-CSRF-Token': csrfToken 
+            }
+        });
         const data = await res.json();
         if (data.success) {
             status.style.background = 'rgba(16,185,129,0.1)';
@@ -157,15 +165,41 @@ async function processImport() {
 // ── API Helpers ───────────────────────────────────────────────
 async function api(url, method = 'GET', body = null) {
     const opts = { method, headers: {} };
-    if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
-    const res = await fetch(url, opts);
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `HTTP ${res.status}`); }
+    
+    // Auto-inject CSRF Token for state-changing methods
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method.toUpperCase())) {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        if (csrfToken) {
+            opts.headers['X-CSRFToken'] = csrfToken;
+            opts.headers['X-CSRF-Token'] = csrfToken;
+        }
+    }
+
+    if (body) { 
+        opts.headers['Content-Type'] = 'application/json'; 
+        opts.body = JSON.stringify(body); 
+    }
+
+    // Cache-busting for GET to ensure freshness
+    const targetUrl = method === 'GET' ? `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}` : url;
+
+    const res = await fetch(targetUrl, opts);
+    if (!res.ok) {
+        let err = `HTTP ${res.status}`;
+        try { const d = await res.json(); err = d.error || d.message || err; } catch(e) {}
+        throw new Error(err);
+    }
     return res.json();
 }
 
 function exportSection(section) {
     window.location.href = `/api/export/${section}`;
-    toast(`Downloading ${section} export...`, 'info');
+    toast(`Downloading ${section} Excel export...`, 'info');
+}
+
+function exportPDF(section) {
+    window.location.href = `/api/export/${section}/pdf`;
+    toast(`Generating ${section} PDF...`, 'info');
 }
 
 // ── Dashboard ─────────────────────────────────────────────────
@@ -561,135 +595,253 @@ async function deleteStudent(id, name) {
     });
 }
 
-// ── AI Exam Generator ─────────────────────────────────────────
+// ── AI Exam Generator (Modern Single-Page Interface) ─────────────────────────────────────────
 async function renderGenerator() {
   const ca = document.getElementById('contentArea');
-  State.wizardStep = 1;
-  State.selectedSubjects = [];
   let subjects = [], settings = {};
-  try { [subjects, settings] = await Promise.all([api('/api/subjects'), api('/api/settings')]); } catch(e) {}
+  
+  ca.innerHTML = `
+    <div style="text-align:center;padding:80px">
+      <div class="ai-orb" style="width:120px; height:120px; margin:0 auto"></div>
+      <div style="margin-top:24px; color:var(--text-muted); font-size:14px; letter-spacing:2px">SYNCHRONIZING AI CORES...</div>
+    </div>`;
+    
+  try { [subjects, settings] = await Promise.all([api('/api/subjects'), api('/api/settings')]); } catch(e) {
+    toast('Hardware initialization failed. Verify database connectivity.', 'error');
+  }
+  
   const today = new Date().toISOString().split('T')[0];
   const nextWeek = new Date(Date.now()+7*86400000).toISOString().split('T')[0];
-  State._subjects = subjects; State._settings = settings;
+
   ca.innerHTML = `
-    <div class="card">
-      <div class="card-title" style="margin-bottom:24px"><i class="fas fa-wand-magic-sparkles"></i>AI Exam Generator</div>
-      <div class="wizard-steps">
-        <div class="wizard-step active"><div class="step-number">1</div><div class="step-label">Configure</div></div>
-        <div class="wizard-step"><div class="step-number">2</div><div class="step-label">Select Subjects</div></div>
-        <div class="wizard-step"><div class="step-number">3</div><div class="step-label">Review & Generate</div></div>
-        <div class="wizard-step"><div class="step-number">4</div><div class="step-label">Results</div></div>
-      </div>
-      <div id="wizardContent">
-        <div style="max-width:600px;margin:0 auto">
-          <div class="form-row">
-            <div class="form-group"><label>Start Date *</label><input class="form-control" id="genStart" type="date" value="${today}"></div>
-            <div class="form-group"><label>End Date *</label><input class="form-control" id="genEnd" type="date" value="${nextWeek}"></div>
+    <div class="wizard-grid">
+      
+      <!-- Left: Configuration Dashboard -->
+      <div class="card" style="padding:32px; border:1px solid var(--border-hover); background:linear-gradient(135deg, rgba(15,23,42,0.6) 0%, rgba(15,23,42,0.9) 100%)">
+        <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:32px">
+          <div>
+            <h2 style="font-size:28px; font-weight:700; background:linear-gradient(to right, #60a5fa, #a855f7); -webkit-background-clip:text; -webkit-text-fill-color:transparent">Neural Scheduler</h2>
+            <p style="color:var(--text-muted); font-size:14px">Configure curriculum parameters for temporal synthesis.</p>
           </div>
-          <div class="form-row">
-            <div class="form-group"><label>Sessions per Day</label>
+          <div style="background:rgba(16,185,129,0.1); color:#10b981; padding:6px 12px; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:1px; border:1px solid rgba(16,185,129,0.2)">
+            ACTIVE ENGINE v2.4
+          </div>
+        </div>
+
+        <div style="margin-bottom:32px">
+          <label style="display:block; font-size:12px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:12px">Execution Window</label>
+          <div class="form-row" style="grid-template-columns:1fr 1fr 120px; gap:16px">
+            <div class="form-group mb-0">
+               <input class="form-control" id="genStart" type="date" value="${today}">
+            </div>
+            <div class="form-group mb-0">
+               <input class="form-control" id="genEnd" type="date" value="${nextWeek}">
+            </div>
+            <div class="form-group mb-0">
               <select class="form-control" id="genSessions">
-                <option value="1">1 (Morning only)</option>
-                <option value="2" selected>2 (Morning + Afternoon)</option>
+                <option value="1">1 Slot</option>
+                <option value="2" selected>2 Slots</option>
               </select>
             </div>
           </div>
-          <div id="aiConfigSuggestions" style="margin-bottom:16px"></div>
+        </div>
+
+        <div style="margin-bottom:32px">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+            <label style="font-size:12px; font-weight:700; color:var(--text-muted); text-transform:uppercase">Subject Matrices</label>
+            <div style="font-size:11px">
+              <a href="#" onclick="toggleAllSubjects(true);return false" style="color:var(--accent);text-decoration:none">Select All</a> &middot; 
+              <a href="#" onclick="toggleAllSubjects(false);return false" style="color:var(--text-muted);text-decoration:none">Clear</a>
+            </div>
+          </div>
+          <div id="subjGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px; max-height:280px; overflow-y:auto; padding-right:8px">
+            ${subjects.map(s=>`
+              <div class="subject-pill active" data-id="${s.id}" onclick="togglePill(this)">
+                <div class="dot" style="background:${s.color}; box-shadow:0 0 10px ${s.color}"></div>
+                <div style="flex:1">
+                  <div style="font-size:13px; font-weight:600">${s.name}</div>
+                  <div style="font-size:10px; opacity:0.6">${s.code} &middot; ${s.student_count} PAX</div>
+                </div>
+                <i class="fas fa-check-circle" style="color:var(--accent); font-size:14px"></i>
+              </div>`).join('')}
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; padding-top:24px; border-top:1px solid var(--border)">
+          <div style="display:flex; align-items:center; gap:12px">
+            <i class="fas fa-microchip" style="color:var(--text-muted); font-size:20px"></i>
+            <div>
+              <div style="font-size:12px; font-weight:600">Quantum Isolation</div>
+              <div style="font-size:10px; color:var(--text-muted)">Social Graph Guarding Active</div>
+            </div>
+          </div>
+          <button class="btn btn-primary pulse-emerald" id="generateBtn" onclick="runGenerate()" style="padding:14px 40px; font-weight:700; font-size:16px; border-radius:30px">
+            <i class="fas fa-bolt"></i> Synthesize Schedule
+          </button>
+        </div>
+      </div>
+
+      <!-- Right: Real-time Output Console -->
+      <div style="display:flex; flex-direction:column; gap:20px">
+        <div class="card" style="background:#000; border:1px solid #333; height:400px; display:flex; flex-direction:column">
+          <div style="padding:12px 16px; background:#111; border-bottom:1px solid #222; display:flex; justify-content:space-between; align-items:center">
+            <div style="font-size:11px; font-weight:700; color:#666; letter-spacing:1px">DIAGNOSTIC CONSOLE</div>
+            <div style="display:flex; gap:6px">
+              <span style="width:8px; height:8px; border-radius:50%; background:#ff5f56"></span>
+              <span style="width:8px; height:8px; border-radius:50%; background:#ffbd2e"></span>
+              <span style="width:8px; height:8px; border-radius:50%; background:#27c93f"></span>
+            </div>
+          </div>
+          <div id="aiConsole" class="ai-console" style="flex:1; border:none; height:auto; background:transparent">
+            <div class="console-line">> KERNEL: AI Exam Scheduler v2.4 initialized.</div>
+            <div class="console-line">> READY: Waiting for synthesis parameters...</div>
+          </div>
+        </div>
+
+        <div class="card" style="text-align:center; background:linear-gradient(rgba(56, 189, 248, 0.05), transparent)">
+          <i class="fas fa-circle-info" style="font-size:24px; color:var(--accent); margin-bottom:12px"></i>
+          <div style="font-size:14px; font-weight:600">Deterministic Allocation</div>
+          <p style="font-size:12px; color:var(--text-muted); margin-top:8px">The AI uses a Constraint Satisfaction Problem (CSP) solver to eliminate scheduling overlaps.</p>
+        </div>
+      </div>
+
+    </div>
+  `;
+}
+
+function togglePill(el) {
+  el.classList.toggle('active');
+  const icon = el.querySelector('i');
+  if(el.classList.contains('active')) {
+    icon.className = 'fas fa-check-circle';
+    icon.style.color = 'var(--accent)';
+  } else {
+    icon.className = 'far fa-circle';
+    icon.style.color = 'var(--text-muted)';
+  }
+}
+
+function toggleAllSubjects(val) {
+  document.querySelectorAll('.subject-pill').forEach(el => {
+    if(val) el.classList.add('active'); else el.classList.remove('active');
+    const icon = el.querySelector('i');
+    if(el.classList.contains('active')) {
+      icon.className = 'fas fa-check-circle';
+      icon.style.color = 'var(--accent)';
+    } else {
+      icon.className = 'far fa-circle';
+      icon.style.color = 'var(--text-muted)';
+    }
+  });
+}
+
+function updateConsole(msg, type="info") {
+  const cons = document.getElementById('aiConsole');
+  if(!cons) return;
+  const line = document.createElement('div');
+  line.className = `console-line ${type}`;
+  line.innerHTML = `> ${msg}`;
+  cons.appendChild(line);
+  cons.scrollTop = cons.scrollHeight;
+}
+
+// Ensure the old goToStep2 and goToStep3 are dead code explicitly overridden or removed.
+
+async function runGenerate() {
+  const activePills = document.querySelectorAll('.subject-pill.active');
+  const selectedSubjects = Array.from(activePills).map(p => parseInt(p.dataset.id));
+  
+  if (!selectedSubjects.length) { 
+    updateConsole('ERROR: No curriculum selected for synthesis.', 'error');
+    toast('Select at least one subject','error'); 
+    return; 
+  }
+
+  const s = document.getElementById('genStart').value;
+  const e = document.getElementById('genEnd').value;
+  const ses = parseInt(document.getElementById('genSessions').value);
+  
+  if (!s || !e) { 
+    updateConsole('ERROR: Temporal window is undefined.', 'error');
+    toast('Start and End dates required','error'); 
+    return; 
+  }
+
+  const btn = document.getElementById('generateBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Synthesizing...'; }
+  
+  updateConsole('INITIATING TIMETABLE SYNTHESIS...', 'warning');
+  updateConsole('Applying Social Graph Isolation filters...', 'info');
+  
+  try {
+    const data = await api('/api/exams/generate','POST',{
+      start_date: s, 
+      end_date: e, 
+      sessions_per_day: ses, 
+      subject_ids: selectedSubjects
+    });
+    
+    updateConsole('SYNTHESIS COMPLETE. VERIFYING SEATING MATRICES...', 'success');
+    await new Promise(r => setTimeout(r, 800)); // Aesthetic delay
+    
+    const ca = document.getElementById('contentArea');
+    ca.innerHTML = `
+      <div class="card" style="animation: fadeInUp 0.5s ease; border: 1px solid var(--success); background:rgba(16, 185, 129, 0.02)">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px">
+          <div>
+            <h3 style="font-size:20px; font-weight:700; color:var(--success)">
+              <i class="fas fa-check-circle"></i> Timetable Generated Successfully
+            </h3>
+            <p style="font-size:13px; color:var(--text-muted)">The exam schedule has been committed to the database.</p>
+          </div>
           <div class="btn-group">
-            <button class="btn btn-secondary" onclick="getAISuggestionsConfig()"><i class="fas fa-robot"></i>AI Suggest</button>
-            <button class="btn btn-primary" onclick="goToStep2()">Next <i class="fas fa-arrow-right"></i></button>
+            <button class="btn btn-secondary btn-sm" onclick="renderGenerator()"><i class="fas fa-redo"></i> Reset AI</button>
+            <button class="btn btn-secondary btn-sm" onclick="exportSection('exams')"><i class="fas fa-file-excel"></i> Excel Export</button>
+            <button class="btn btn-primary btn-sm" onclick="navigateTo('exams')"><i class="fas fa-arrow-right"></i> View Grid</button>
+          </div>
+        </div>
+
+        <div class="stats-grid" style="grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:32px">
+          <div class="stat-card">
+            <div class="stat-label">Exams Created</div>
+            <div class="stat-value" style="color:var(--accent)">${data.total_exams}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Duties Assigned</div>
+            <div class="stat-value" style="color:var(--purple)">${data.duties_assigned}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Conflicts</div>
+            <div class="stat-value" style="color:${data.conflicts.length?'var(--danger)':'var(--success)'}">${data.conflicts.length}</div>
+          </div>
+        </div>
+
+        <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:12px; overflow:hidden">
+          <div style="padding:12px 16px; background:rgba(255,255,255,0.03); font-size:12px; font-weight:700; color:var(--text-muted)">PREVIEW TIMELINE</div>
+          <div style="max-height:300px; overflow-y:auto; padding:8px">
+            ${data.exams.length ? data.exams.map(ex => `
+              <div style="display:flex; align-items:center; gap:16px; padding:12px; border-bottom:1px solid var(--border)">
+                <div style="text-align:center; min-width:60px">
+                  <div style="font-size:10px; color:var(--text-muted)">${ex.date.split('-').slice(1).join('/')}</div>
+                  <div style="font-size:12px; font-weight:700">${ex.session_label}</div>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:14px; font-weight:600">${ex.subject_name}</div>
+                  <div style="font-size:11px; color:var(--text-muted)">${ex.room_name} &bull; ${ex.start_time}</div>
+                </div>
+                <div class="badge badge-info">${ex.subject_code}</div>
+              </div>
+            `).join('') : '<div style="padding:40px; text-align:center; color:var(--text-muted)">No exams returned. Check logs.</div>'}
           </div>
         </div>
       </div>
-    </div>`;
-}
-
-async function getAISuggestionsConfig() {
-  const div = document.getElementById('aiConfigSuggestions');
-  div.innerHTML = '<div style="color:var(--text-muted);font-size:13px"><i class="fas fa-spinner fa-spin"></i> Getting AI suggestions...</div>';
-  try {
-    const data = await api('/api/ai/suggest','POST',{section:'scheduling'});
-    div.innerHTML = (data.suggestions||[]).map(s=>`<div class="ai-suggestion ${s.type}"><i class="fas fa-robot"></i>${s.message}</div>`).join('');
-  } catch(e) { div.innerHTML = ''; }
-}
-
-function goToStep2() {
-  const s = document.getElementById('genStart').value;
-  const e = document.getElementById('genEnd').value;
-  const ses = document.getElementById('genSessions').value;
-  if (!s || !e) { toast('Start and End dates are required','error'); return; }
-  State.genStart = s; State.genEnd = e; State.genSessions = parseInt(ses);
-  const subjects = State._subjects || [];
-  document.querySelector('.wizard-steps').innerHTML = `
-    <div class="wizard-step completed"><div class="step-number"><i class="fas fa-check"></i></div><div class="step-label">Configure</div></div>
-    <div class="wizard-step active"><div class="step-number">2</div><div class="step-label">Select Subjects</div></div>
-    <div class="wizard-step"><div class="step-number">3</div><div class="step-label">Review</div></div>
-    <div class="wizard-step"><div class="step-number">4</div><div class="step-label">Results</div></div>`;
-  document.getElementById('wizardContent').innerHTML = `
-    <div style="max-width:700px;margin:0 auto">
-      <p style="color:var(--text-secondary);margin-bottom:16px;font-size:13px">Select subjects to include. Uncheck any you want to skip.</p>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:24px" id="subjGrid">
-        ${subjects.length ? subjects.map(s=>`
-          <label style="display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--border);border-radius:10px;cursor:pointer">
-            <input type="checkbox" value="${s.id}" checked style="width:16px;height:16px;accent-color:#3b82f6">
-            <span class="color-dot" style="background:${s.color}"></span>
-            <div><div style="font-size:13px;font-weight:500">${s.name}</div><div style="font-size:11px;color:var(--text-muted)">${s.branch||''} · ${s.student_count} students</div></div>
-          </label>`).join('') : '<div style="grid-column:1/-1;color:var(--text-muted);font-size:13px">No subjects found. Add subjects first.</div>'}
-      </div>
-      <div class="btn-group">
-        <button class="btn btn-secondary" onclick="renderGenerator()"><i class="fas fa-arrow-left"></i>Back</button>
-        <button class="btn btn-primary" onclick="goToStep3()">Review <i class="fas fa-arrow-right"></i></button>
-      </div>
-    </div>`;
-}
-
-function goToStep3() {
-  const checked = document.querySelectorAll('#subjGrid input[type=checkbox]:checked');
-  State.selectedSubjects = Array.from(checked).map(c=>parseInt(c.value));
-  if (!State.selectedSubjects.length) { toast('Select at least one subject','error'); return; }
-  document.querySelector('.wizard-steps').innerHTML = `
-    <div class="wizard-step completed"><div class="step-number"><i class="fas fa-check"></i></div><div class="step-label">Configure</div></div>
-    <div class="wizard-step completed"><div class="step-number"><i class="fas fa-check"></i></div><div class="step-label">Subjects</div></div>
-    <div class="wizard-step active"><div class="step-number">3</div><div class="step-label">Review</div></div>
-    <div class="wizard-step"><div class="step-number">4</div><div class="step-label">Results</div></div>`;
-  document.getElementById('wizardContent').innerHTML = `
-    <div style="max-width:600px;margin:0 auto;text-align:center;padding:32px">
-      <i class="fas fa-robot" style="font-size:64px;color:#3b82f6;margin-bottom:16px;display:block"></i>
-      <h3 style="font-size:20px;font-weight:600;margin-bottom:8px">Ready to Generate</h3>
-      <p style="color:var(--text-secondary);font-size:14px;margin-bottom:8px">${State.selectedSubjects.length} subject(s) · ${State.genStart} to ${State.genEnd} · ${State.genSessions} session(s)/day</p>
-      <div class="ai-suggestion info" style="text-align:left;margin:20px 0"><i class="fas fa-brain"></i>The AI will use Constraint Satisfaction (CSP) scheduling with Social-Graph Isolation for anti-cheating seating. Invigilators will be assigned using the Fatigue-Aware greedy algorithm.</div>
-      <div class="btn-group" style="justify-content:center">
-        <button class="btn btn-secondary" onclick="goToStep2()"><i class="fas fa-arrow-left"></i>Back</button>
-        <button class="btn btn-success" id="generateBtn" onclick="runGenerate()"><i class="fas fa-wand-magic-sparkles"></i>Generate Timetable</button>
-      </div>
-    </div>`;
-}
-
-async function runGenerate() {
-  const btn = document.getElementById('generateBtn');
-  if (btn) { btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> AI Working...'; }
-  try {
-    const data = await api('/api/exams/generate','POST',{start_date:State.genStart,end_date:State.genEnd,sessions_per_day:State.genSessions,subject_ids:State.selectedSubjects});
-    const ca = document.getElementById('contentArea');
-    ca.innerHTML = `
-      <div class="card">
-        <div class="card-title" style="margin-bottom:16px"><i class="fas fa-check-circle" style="color:#10b981"></i>Timetable Generated!</div>
-        ${data.conflicts&&data.conflicts.length?`<div class="alert-banner warning"><i class="fas fa-exclamation-triangle"></i>${data.conflicts.join(' | ')}</div>`:'<div class="alert-banner success"><i class="fas fa-check"></i>All exams scheduled without conflicts!</div>'}
-        <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px">
-          <div class="stat-card"><div class="stat-icon" style="background:rgba(16,185,129,0.12);color:#10b981"><i class="fas fa-calendar-check"></i></div><div class="stat-value" style="color:#10b981">${data.total_exams}</div><div class="stat-label">Exams Created</div></div>
-          <div class="stat-card"><div class="stat-icon" style="background:rgba(59,130,246,0.12);color:#3b82f6"><i class="fas fa-user-shield"></i></div><div class="stat-value" style="color:#3b82f6">${data.duties_assigned}</div><div class="stat-label">Duties Assigned</div></div>
-          <div class="stat-card"><div class="stat-icon" style="background:rgba(239,68,68,0.12);color:#ef4444"><i class="fas fa-triangle-exclamation"></i></div><div class="stat-value" style="color:#ef4444">${(data.conflicts||[]).length}</div><div class="stat-label">Conflicts</div></div>
-        </div>
-        <div class="table-container"><table><thead><tr><th>Subject</th><th>Room</th><th>Date</th><th>Time</th><th>Session</th><th>Students</th></tr></thead>
-        <tbody>${(data.exams||[]).map(e=>`<tr><td><strong>${e.subject_name}</strong></td><td>${e.room_name}</td><td>${e.date}</td><td>${e.start_time}–${e.end_time}</td><td><span class="badge badge-info">${e.session_label}</span></td><td>${e.student_count}</td></tr>`).join('')}</tbody></table></div>
-        <div class="btn-group" style="margin-top:16px">
-          <button class="btn btn-primary" onclick="navigateTo('exams')"><i class="fas fa-calendar"></i>View Sessions</button>
-          <button class="btn btn-secondary" onclick="renderGenerator()"><i class="fas fa-redo"></i>Generate Again</button>
-          <button class="btn btn-secondary" onclick="exportSection('exams')"><i class="fas fa-file-export"></i>Export</button>
-        </div>
-      </div>`;
-    toast('Timetable generated!','success');
-  } catch(e) { toast('Generation failed: '+e.message,'error'); if(btn){btn.disabled=false;btn.innerHTML='<i class="fas fa-wand-magic-sparkles"></i>Generate Timetable';} }
+    `;
+    toast('Synthesis finalized','success');
+  } catch(e) { 
+    updateConsole('FATAL ERROR: ' + e.message, 'error');
+    toast(e.message,'error'); 
+    if(btn){ btn.disabled = false; btn.innerHTML = '<i class="fas fa-bolt"></i> Retry Synthesis'; }
+  }
 }
 
 // ── Exam Sessions ─────────────────────────────────────────────
@@ -697,13 +849,15 @@ async function renderExams() {
   const ca = document.getElementById('contentArea');
   ca.innerHTML = `<div style="text-align:center;padding:60px"><i class="fas fa-spinner fa-spin" style="font-size:32px;color:#3b82f6"></i></div>`;
   try {
-    const exams = await api('/api/exams');
+    const res = await api('/api/exams');
+    const exams = res.data || [];
     ca.innerHTML = `
       <div class="card">
         <div class="card-header">
-          <div class="card-title"><i class="fas fa-calendar-check"></i>Sessions (${exams.length})</div>
+          <div class="card-title"><i class="fas fa-calendar-check"></i>Sessions (${res.total || 0})</div>
           <div class="btn-group">
-            <button class="btn btn-secondary btn-sm" onclick="exportSection('exams')"><i class="fas fa-file-export"></i>Export</button>
+            <button class="btn btn-secondary btn-sm" onclick="exportSection('exams')"><i class="fas fa-file-excel"></i>Excel</button>
+            <button class="btn btn-secondary btn-sm" onclick="exportPDF('exams')"><i class="fas fa-file-pdf"></i>PDF</button>
             <button class="btn btn-warning btn-sm" onclick="clearAllExams()"><i class="fas fa-trash"></i>Clear All</button>
             <button class="btn btn-primary btn-sm" onclick="navigateTo('generator')"><i class="fas fa-wand-magic-sparkles"></i>Generate</button>
           </div>
@@ -721,8 +875,13 @@ async function renderSeating() {
   const ca = document.getElementById('contentArea');
   ca.innerHTML = `<div style="text-align:center;padding:60px"><i class="fas fa-spinner fa-spin" style="font-size:32px;color:#3b82f6"></i></div>`;
   try {
-    const [seats,exams,rooms] = await Promise.all([api('/api/seating'),api('/api/exams'),api('/api/rooms')]);
-    window._allSeats=seats; window._allRooms=rooms;
+    const [seats, examsRes, rooms] = await Promise.all([
+      api('/api/seating'),
+      api('/api/exams?per_page=100'),
+      api('/api/rooms')
+    ]);
+    const exams = examsRes.data || [];
+    window._allSeats = seats; window._allRooms = rooms;
     ca.innerHTML = `
       <div class="card">
         <div class="card-header"><div class="card-title"><i class="fas fa-chair"></i>Seating Chart</div>
@@ -748,7 +907,10 @@ async function renderDuties() {
     ca.innerHTML = `
       <div class="card">
         <div class="card-header"><div class="card-title"><i class="fas fa-clipboard-list"></i>Duty Assignments (${duties.length})</div>
-          <button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/export/attendance/teacher'"><i class="fas fa-download"></i>Attendance Sheet</button>
+          <div class="btn-group">
+            <button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/export/attendance/teacher'"><i class="fas fa-file-excel"></i>Teacher Excel</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/export/attendance/teacher/pdf'"><i class="fas fa-file-pdf"></i>Teacher PDF</button>
+          </div>
         </div>
         <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
           <div class="stat-card"><div class="stat-icon" style="background:rgba(59,130,246,0.12);color:#3b82f6"><i class="fas fa-list"></i></div><div class="stat-value" style="color:#3b82f6">${duties.length}</div><div class="stat-label">Total</div></div>
@@ -820,7 +982,7 @@ async function saveBranch(){const name=document.getElementById('bName').value.tr
 async function deleteBranch(id,name){showConfirm('Delete Branch',`Remove "${name}"?`,async()=>{try{await api(`/api/branches/${id}`,'DELETE');toast('Deleted','success');renderBranches();}catch(e){toast(e.message,'error');}});}
 
 // ── Staff Duties ──────────────────────────────────────────────
-async function renderStaffDuties(){const ca=document.getElementById('contentArea');ca.innerHTML=`<div style="text-align:center;padding:60px"><i class="fas fa-spinner fa-spin" style="font-size:32px;color:#3b82f6"></i></div>`;try{const d=await api('/api/staff-duties');ca.innerHTML=`<div class="card"><div class="card-header"><div class="card-title"><i class="fas fa-user-tie"></i>Staff Duties (${d.length})</div><div class="btn-group"><button class="btn btn-secondary btn-sm" onclick="openImportModal('staff_duties')"><i class="fas fa-file-import"></i>Import</button><button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/export/attendance/staff'"><i class="fas fa-download"></i>Attendance</button><button class="btn btn-primary btn-sm" onclick="document.getElementById('sdForm').style.display='block'"><i class="fas fa-plus"></i>Add</button></div></div><div id="sdForm" style="display:none;border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:20px;background:rgba(15,23,42,0.4)"><div class="form-row"><div class="form-group"><label>Staff Name *</label><input class="form-control" id="sdName" placeholder="e.g. Rajesh Kumar"></div><div class="form-group"><label>Duty Description</label><input class="form-control" id="sdDesc" placeholder="e.g. Hall Arrangement"></div><div class="form-group"><label>Location</label><input class="form-control" id="sdLoc" placeholder="e.g. Exam Hall A"></div></div><div class="form-row"><div class="form-group"><label>Date</label><input class="form-control" id="sdDate" type="date"></div><div class="form-group"><label>Start Time</label><input class="form-control" id="sdStart" type="time" value="08:00"></div><div class="form-group"><label>End Time</label><input class="form-control" id="sdEnd" type="time" value="17:00"></div></div><div class="btn-group"><button class="btn btn-primary" onclick="saveStaffDuty()"><i class="fas fa-save"></i>Save</button><button class="btn btn-secondary" onclick="document.getElementById('sdForm').style.display='none'">Cancel</button></div></div><div class="table-container"><table><thead><tr><th>Staff Name</th><th>Duty</th><th>Location</th><th>Date</th><th>Time</th><th>Attended</th><th>Check-in</th><th>Actions</th></tr></thead><tbody>${d.length?d.map(x=>`<tr><td><strong>${x.staff_name}</strong></td><td>${x.duty_description||'—'}</td><td>${x.location||'—'}</td><td>${x.date}</td><td>${x.start_time}–${x.end_time}</td><td><span class="badge ${x.attended?'badge-success':'badge-warning'}">${x.attended?'Yes':'No'}</span></td><td>${x.check_in_time||'—'}</td><td><button class="btn btn-danger btn-icon btn-sm" onclick="deleteStaffDuty(${x.id})"><i class="fas fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="8"><div class="empty-state"><i class="fas fa-clipboard"></i><p>No staff duties. Add or import.</p></div></td></tr>'}</tbody></table></div></div>`;}catch(e){ca.innerHTML=`<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>${e.message}</p></div>`;}}
+async function renderStaffDuties(){const ca=document.getElementById('contentArea');ca.innerHTML=`<div style="text-align:center;padding:60px"><i class="fas fa-spinner fa-spin" style="font-size:32px;color:#3b82f6"></i></div>`;try{const d=await api('/api/staff-duties');ca.innerHTML=`<div class="card"><div class="card-header"><div class="card-title"><i class="fas fa-user-tie"></i>Staff Duties (${d.length})</div><div class="btn-group"><button class="btn btn-secondary btn-sm" onclick="openImportModal('staff_duties')"><i class="fas fa-file-import"></i>Import</button><button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/export/attendance/staff'"><i class="fas fa-file-excel"></i>Staff Excel</button><button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/export/attendance/staff/pdf'"><i class="fas fa-file-pdf"></i>Staff PDF</button><button class="btn btn-primary btn-sm" onclick="document.getElementById('sdForm').style.display='block'"><i class="fas fa-plus"></i>Add</button></div></div><div id="sdForm" style="display:none;border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:20px;background:rgba(15,23,42,0.4)"><div class="form-row"><div class="form-group"><label>Staff Name *</label><input class="form-control" id="sdName" placeholder="e.g. Rajesh Kumar"></div><div class="form-group"><label>Duty Description</label><input class="form-control" id="sdDesc" placeholder="e.g. Hall Arrangement"></div><div class="form-group"><label>Location</label><input class="form-control" id="sdLoc" placeholder="e.g. Exam Hall A"></div></div><div class="form-row"><div class="form-group"><label>Date</label><input class="form-control" id="sdDate" type="date"></div><div class="form-group"><label>Start Time</label><input class="form-control" id="sdStart" type="time" value="08:00"></div><div class="form-group"><label>End Time</label><input class="form-control" id="sdEnd" type="time" value="17:00"></div></div><div class="btn-group"><button class="btn btn-primary" onclick="saveStaffDuty()"><i class="fas fa-save"></i>Save</button><button class="btn btn-secondary" onclick="document.getElementById('sdForm').style.display='none'">Cancel</button></div></div><div class="table-container"><table><thead><tr><th>Staff Name</th><th>Duty</th><th>Location</th><th>Date</th><th>Time</th><th>Attended</th><th>Check-in</th><th>Actions</th></tr></thead><tbody>${d.length?d.map(x=>`<tr><td><strong>${x.staff_name}</strong></td><td>${x.duty_description||'—'}</td><td>${x.location||'—'}</td><td>${x.date}</td><td>${x.start_time}–${x.end_time}</td><td><span class="badge ${x.attended?'badge-success':'badge-warning'}">${x.attended?'Yes':'No'}</span></td><td>${x.check_in_time||'—'}</td><td><button class="btn btn-danger btn-icon btn-sm" onclick="deleteStaffDuty(${x.id})"><i class="fas fa-trash"></i></button></td></tr>`).join(''):'<tr><td colspan="8"><div class="empty-state"><i class="fas fa-clipboard"></i><p>No staff duties. Add or import.</p></div></td></tr>'}</tbody></table></div></div>`;}catch(e){ca.innerHTML=`<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>${e.message}</p></div>`;}}
 async function saveStaffDuty(){const n=document.getElementById('sdName').value.trim();if(!n){toast('Staff name required','error');return;}try{await api('/api/staff-duties','POST',{staff_name:n,duty_description:document.getElementById('sdDesc').value,location:document.getElementById('sdLoc').value,date:document.getElementById('sdDate').value,start_time:document.getElementById('sdStart').value,end_time:document.getElementById('sdEnd').value});toast('Duty added!','success');renderStaffDuties();}catch(e){toast(e.message,'error');}}
 async function deleteStaffDuty(id){showConfirm('Delete Duty','Remove this staff duty?',async()=>{try{await api(`/api/staff-duties/${id}`,'DELETE');toast('Deleted','success');renderStaffDuties();}catch(e){toast(e.message,'error');}});}
 

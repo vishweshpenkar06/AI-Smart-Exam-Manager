@@ -5,47 +5,80 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Exam Manager — Login</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:'Inter',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#0f172a 100%);color:#e2e8f0;overflow:hidden}
-        .bg-grid{position:fixed;top:0;left:0;width:100%;height:100%;background-image:radial-gradient(circle at 1px 1px,rgba(148,163,184,0.08) 1px,transparent 0);background-size:40px 40px;z-index:0}
-        .login-container{position:relative;z-index:1;width:100%;max-width:440px;padding:20px}
-        .login-card{background:rgba(30,41,59,0.8);backdrop-filter:blur(20px);border:1px solid rgba(148,163,184,0.1);border-radius:20px;padding:48px 40px;box-shadow:0 25px 50px rgba(0,0,0,0.4)}
+        body{font-family:'Outfit',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#09090b;color:#f8fafc;overflow:hidden;position:relative}
+        
+        /* Animated Background Elements */
+        .orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:0.4;animation:float 10s infinite ease-in-out alternate}
+        .orb-1{top:-10%;left:-10%;width:400px;height:400px;background:#3b82f6;animation-delay:0s}
+        .orb-2{bottom:-20%;right:-10%;width:500px;height:500px;background:#8b5cf6;animation-delay:-5s}
+        .orb-3{top:30%;left:40%;width:300px;height:300px;background:#0ea5e9;animation-delay:-2s}
+        @keyframes float{0%{transform:translate(0,0) scale(1)}100%{transform:translate(30px,30px) scale(1.1)}}
+        
+        .bg-grid{position:fixed;top:0;left:0;width:100%;height:100%;background-image:radial-gradient(circle at 1px 1px,rgba(255,255,255,0.05) 1px,transparent 0);background-size:40px 40px;z-index:0}
+        
+        .login-container{position:relative;z-index:1;width:100%;max-width:440px;padding:20px;perspective:1000px}
+        .login-card{background:rgba(24,24,27,0.6);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);border:1px solid rgba(255,255,255,0.08);border-radius:24px;padding:48px 40px;box-shadow:0 30px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);animation:slideUp 0.6s cubic-bezier(0.16,1,0.3,1)}
+        @keyframes slideUp{0%{opacity:0;transform:translateY(30px)}100%{opacity:1;transform:translateY(0)}}
+        
         .logo{text-align:center;margin-bottom:32px}
-        .logo i{font-size:48px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:12px;display:block}
-        .logo h1{font-size:24px;font-weight:700;letter-spacing:-0.5px}
-        .logo h1 span{background:linear-gradient(135deg,#3b82f6,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-        .logo p{color:#94a3b8;font-size:13px;margin-top:4px}
+        .logo i{font-size:48px;background:linear-gradient(135deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:16px;display:block;filter:drop-shadow(0 4px 12px rgba(56,189,248,0.3))}
+        .logo h1{font-size:26px;font-weight:700;letter-spacing:-0.5px;margin-bottom:4px}
+        .logo h1 span{background:linear-gradient(135deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+        .logo p{color:#94a3b8;font-size:14px;font-weight:300}
+        
         .form-group{margin-bottom:20px}
-        .form-group label{display:block;color:#94a3b8;font-size:13px;font-weight:500;margin-bottom:8px}
+        .form-group label{display:block;color:#cbd5e1;font-size:13px;font-weight:500;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
+        
         .input-wrapper{position:relative}
-        .input-wrapper i{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#64748b;font-size:14px}
-        .input-wrapper input{width:100%;padding:14px 14px 14px 42px;background:rgba(15,23,42,0.6);border:1px solid rgba(148,163,184,0.15);border-radius:12px;color:#e2e8f0;font-size:14px;transition:all 0.3s;outline:none;font-family:'Inter',sans-serif}
-        .input-wrapper input:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.15)}
+        .input-wrapper i{position:absolute;left:16px;top:50%;transform:translateY(-50%);color:#64748b;font-size:16px;transition:color 0.3s}
+        .input-wrapper input{width:100%;padding:14px 16px 14px 44px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.08);border-radius:14px;color:#f8fafc;font-size:15px;transition:all 0.3s;outline:none;font-family:'Outfit',sans-serif}
+        .input-wrapper input:focus{border-color:#38bdf8;box-shadow:0 0 0 4px rgba(56,189,248,0.15);background:rgba(0,0,0,0.6)}
+        .input-wrapper input:-webkit-autofill,
+        .input-wrapper input:-webkit-autofill:hover, 
+        .input-wrapper input:-webkit-autofill:focus, 
+        .input-wrapper input:-webkit-autofill:active{
+            -webkit-box-shadow: 0 0 0 30px rgb(20,20,22) inset !important;
+            -webkit-text-fill-color: white !important;
+        }
+        .input-wrapper input:focus + i, .input-wrapper input:not(:placeholder-shown) + i{color:#38bdf8}
         .input-wrapper input::placeholder{color:#475569}
-        .login-btn{width:100%;padding:14px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);border:none;border-radius:12px;color:#fff;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.3s;font-family:'Inter',sans-serif;margin-top:8px}
-        .login-btn:hover{transform:translateY(-2px);box-shadow:0 8px 25px rgba(59,130,246,0.3)}
+        
+        /* CSRF Protection Injection spot (if needed via forms in future) */
+        
+        .login-btn{width:100%;padding:16px;background:linear-gradient(135deg,#2563eb,#8b5cf6);border:none;border-radius:14px;color:#fff;font-size:16px;font-weight:600;cursor:pointer;transition:all 0.3s;font-family:'Outfit',sans-serif;margin-top:12px;position:relative;overflow:hidden}
+        .login-btn::after{content:'';position:absolute;top:0;left:-100%;width:50%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.2),transparent);transform:skewX(-20deg);transition:left 0.5s ease}
+        .login-btn:hover::after{left:150%}
+        .login-btn:hover{transform:translateY(-2px);box-shadow:0 12px 25px rgba(37,99,235,0.4)}
         .login-btn:active{transform:translateY(0)}
-        .error-msg{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;padding:12px 16px;border-radius:10px;font-size:13px;margin-bottom:20px;display:none;align-items:center;gap:8px}
-        .error-msg i{color:#ef4444}
-        .credentials{margin-top:28px;padding-top:24px;border-top:1px solid rgba(148,163,184,0.1)}
-        .credentials h4{color:#94a3b8;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;text-align:center}
-        .cred-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(15,23,42,0.4);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:background 0.2s}
-        .cred-item:hover{background:rgba(59,130,246,0.1)}
-        .cred-icon{width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff}
-        .cred-icon.admin{background:linear-gradient(135deg,#3b82f6,#2563eb)}
-        .cred-icon.teacher{background:linear-gradient(135deg,#10b981,#059669)}
-        .cred-icon.staff{background:linear-gradient(135deg,#f59e0b,#d97706)}
+        
+        .error-msg{background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);color:#fca5a5;padding:14px 16px;border-radius:12px;font-size:14px;margin-bottom:24px;display:none;align-items:center;gap:10px;animation:shake 0.4s ease-in-out}
+        .error-msg i{color:#f87171;font-size:16px}
+        @keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-5px)}40%,80%{transform:translateX(5px)}}
+        
+        .credentials{margin-top:32px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.08)}
+        .credentials h4{color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px;text-align:center}
+        .cred-item{display:flex;align-items:center;gap:12px;padding:10px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.05);border-radius:12px;margin-bottom:8px;cursor:pointer;transition:all 0.2s}
+        .cred-item:hover{background:rgba(56,189,248,0.08);border-color:rgba(56,189,248,0.2);transform:translateX(4px)}
+        
+        .cred-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff}
+        .cred-icon.admin{background:linear-gradient(135deg,#38bdf8,#3b82f6)}
+        .cred-icon.teacher{background:linear-gradient(135deg,#34d399,#10b981)}
+        .cred-icon.staff{background:linear-gradient(135deg,#fbbf24,#f59e0b)}
+        
         .cred-info{flex:1}
-        .cred-info .role{font-size:12px;font-weight:600;color:#e2e8f0}
-        .cred-info .detail{font-size:11px;color:#64748b}
-        .pulse{animation:pulse 2s infinite}
-        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.7}}
+        .cred-info .role{font-size:13px;font-weight:600;color:#f8fafc}
+        .cred-info .detail{font-size:12px;color:#94a3b8;margin-top:2px}
     </style>
 </head>
 <body>
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
     <div class="bg-grid"></div>
+    
     <div class="login-container">
         <div class="login-card">
             <div class="logo">
@@ -80,25 +113,25 @@
             </form>
 
             <div class="credentials">
-                <h4>Quick Login</h4>
+                <h4>Demo Access</h4>
                 <div class="cred-item" onclick="fillCreds('AdminPro','admin@123')">
                     <div class="cred-icon admin"><i class="fas fa-shield-halved"></i></div>
                     <div class="cred-info">
-                        <div class="role">Admin</div>
+                        <div class="role">Admin Mode</div>
                         <div class="detail">AdminPro / admin@123</div>
                     </div>
                 </div>
                 <div class="cred-item" onclick="fillCreds('Teacher','teacher@456')">
                     <div class="cred-icon teacher"><i class="fas fa-chalkboard-teacher"></i></div>
                     <div class="cred-info">
-                        <div class="role">Teacher / Invigilator</div>
+                        <div class="role">Invigilator Mode</div>
                         <div class="detail">Teacher / teacher@456</div>
                     </div>
                 </div>
                 <div class="cred-item" onclick="fillCreds('Staff','staff@789')">
                     <div class="cred-icon staff"><i class="fas fa-user-tie"></i></div>
                     <div class="cred-info">
-                        <div class="role">Non-Teaching Staff</div>
+                        <div class="role">Staff Mode</div>
                         <div class="detail">Staff / staff@789</div>
                     </div>
                 </div>
@@ -118,8 +151,13 @@
             const password = document.getElementById('password').value;
             const errDiv = document.getElementById('errorMsg');
             const errText = document.getElementById('errorText');
+            const btn = document.querySelector('.login-btn');
+
+            btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Authenticating...';
+            btn.style.opacity = '0.8';
 
             try {
+                // Determine CSRF Token if present in cookies (Flask-WTF setup later)
                 const res = await fetch('/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -127,13 +165,22 @@
                 });
                 const data = await res.json();
                 if (data.success) {
+                    btn.innerHTML = '<i class="fas fa-check"></i> Redirecting...';
                     window.location.href = data.redirect;
                 } else {
+                    btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Sign In';
+                    btn.style.opacity = '1';
                     errText.textContent = data.message || 'Invalid credentials';
                     errDiv.style.display = 'flex';
-                    setTimeout(() => errDiv.style.display = 'none', 4000);
+                    // Re-trigger shake 
+                    errDiv.style.animation = 'none';
+                    errDiv.offsetHeight; /* trigger reflow */
+                    errDiv.style.animation = null;
+                    setTimeout(() => errDiv.style.display = 'none', 5000);
                 }
             } catch (err) {
+                btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Sign In';
+                btn.style.opacity = '1';
                 errText.textContent = 'Connection error. Please try again.';
                 errDiv.style.display = 'flex';
             }

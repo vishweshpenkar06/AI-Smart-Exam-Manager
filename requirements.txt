@@ -3,3 +3,8 @@ Flask-Login==0.6.3
 Flask-SQLAlchemy==3.1.1
 openpyxl==3.1.2
 Werkzeug==3.0.1
+fpdf2==2.7.8
+python-dotenv==1.0.0
+Flask-WTF==1.2.1
+Flask-Limiter==4.1.1
+Flask-Migrate==4.0.5

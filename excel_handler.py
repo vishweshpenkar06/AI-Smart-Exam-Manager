@@ -186,6 +186,9 @@ def import_data(section, file_stream):
         return data, None
 
     except Exception as e:
+        print(f"[EXCEL IMPORT ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
         return [], f'Error reading Excel file: {str(e)}'
 
 
