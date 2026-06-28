@@ -22,7 +22,7 @@ from sqlalchemy.orm import joinedload
 from models import (db, User, Invigilator, Room, Subject, Student, Exam,
                     SeatingAssignment, DutyAssignment, InventoryItem,
                     RestockRequest, Branch, EmergencyLog, AuditLog,
-                    Setting, StaffDuty)
+                    Setting, StaffDuty, Notification, Message, ConflictPrediction)
 from ai_engine import (AIExamScheduler, SocialGraphIsolation,
                        SelfHealingEngine, InventoryPredictor)
 from excel_handler import (export_data, import_data, generate_template,
@@ -32,6 +32,10 @@ from seed_data import seed_all
 from logger_setup import setup_logging
 from config import config as app_config
 from exceptions import AppException, ValidationError
+from realtime import init_realtime, emit_notification, emit_broadcast, emit_role_notification, emit_conflict_alert
+from notification_service import (create_notification, broadcast_notification,
+                                  broadcast_role_notification, get_user_notifications,
+                                  get_unread_count, mark_read, mark_all_read)
 
 # ─── Load Environment Variables ───────────────────────────────────
 from dotenv import load_dotenv
@@ -48,6 +52,9 @@ app.config['SQLALCHEMY_DATABASE_URI'] = (
 app.config['UPLOAD_FOLDER'] = os.path.join(basedir, 'static', 'uploads')
 
 db.init_app(app)
+
+# ─── Real-time WebSocket ──────────────────────────────────────────
+init_realtime(app)
 
 # ─── Security Extensions ──────────────────────────────────────────
 csrf = CSRFProtect()
@@ -822,6 +829,12 @@ def generate_exams():
                f'Generated {len(schedule)} exams from {start_date} to {end_date}',
                current_user.username, 'ai')
 
+    broadcast_notification(
+        'Exam Schedule Generated',
+        f'{len(schedule)} exams scheduled from {start_date} to {end_date}',
+        category='info', severity='medium'
+    )
+
     return jsonify({
         'success': True,
         'exams': schedule,
@@ -1096,6 +1109,14 @@ def add_restock():
     db.session.add(req)
     db.session.commit()
     log_action('Restock Request', f'Requested {req.requested_qty} units', current_user.username, 'create')
+
+    broadcast_role_notification(
+        'admin',
+        'New Restock Request',
+        f'{current_user.username} requested {req.requested_qty} units of item #{req.item_id}',
+        category='task', severity='medium'
+    )
+
     return jsonify(req.to_dict()), 201
 
 
@@ -1113,6 +1134,16 @@ def approve_restock(rid):
         item.last_updated = datetime.utcnow()
     db.session.commit()
     log_action('Restock Approved', f'Approved restock #{rid}', current_user.username, 'approve')
+
+    if req.requested_by:
+        requester = User.query.filter_by(username=req.requested_by).first()
+        if requester:
+            create_notification(
+                requester.id, 'Restock Approved',
+                f'Your restock request for {req.requested_qty} units has been approved',
+                category='task', severity='low'
+            )
+
     return jsonify(req.to_dict())
 
 
@@ -1125,6 +1156,16 @@ def reject_restock(rid):
     req.status = 'rejected'
     db.session.commit()
     log_action('Restock Rejected', f'Rejected restock #{rid}', current_user.username, 'reject')
+
+    if req.requested_by:
+        requester = User.query.filter_by(username=req.requested_by).first()
+        if requester:
+            create_notification(
+                requester.id, 'Restock Rejected',
+                f'Your restock request for {req.requested_qty} units has been rejected',
+                category='task', severity='medium'
+            )
+
     return jsonify(req.to_dict())
 
 
@@ -1239,6 +1280,12 @@ def emergency_room():
         log_action('Emergency: Room', f'Room emergency handled. {result["message"]}',
                    current_user.username, 'emergency')
 
+        broadcast_notification(
+            'Room Emergency Handled',
+            f'{room.name if room else "Room"}: {result["message"]}',
+            category='emergency', severity='critical'
+        )
+
     return jsonify(result)
 
 
@@ -1283,6 +1330,12 @@ def emergency_invigilator():
         log_action('Emergency: Invigilator', f'Invigilator emergency handled. {result["message"]}',
                    current_user.username, 'emergency')
 
+        broadcast_notification(
+            'Invigilator Emergency Handled',
+            f'{inv.name if inv else "Invigilator"}: {result["message"]}',
+            category='emergency', severity='critical'
+        )
+
     return jsonify(result)
 
 
@@ -1304,6 +1357,210 @@ def get_audit():
         query = query.filter_by(log_type=log_type)
     logs = query.order_by(AuditLog.timestamp.desc()).limit(limit).all()
     return jsonify([l.to_dict() for l in logs])
+
+
+# ─── Conflict Detection API ──────────────────────────────────────
+@app.route('/api/conflicts', methods=['GET'])
+@login_required
+def get_conflicts():
+    status = request.args.get('status', '')
+    query = ConflictPrediction.query
+    if status:
+        query = query.filter_by(status=status)
+    conflicts = query.order_by(ConflictPrediction.detected_at.desc()).all()
+    return jsonify([c.to_dict() for c in conflicts])
+
+
+@app.route('/api/conflicts/detect', methods=['POST'])
+@login_required
+def detect_conflicts():
+    from ai_engine import ConflictPredictor
+    conflicts = ConflictPredictor.detect_all_conflicts()
+    saved = []
+    for c in conflicts:
+        existing = ConflictPrediction.query.filter_by(
+            conflict_type=c['conflict_type'], status='detected'
+        ).first()
+        if not existing:
+            cp = ConflictPrediction(
+                conflict_type=c['conflict_type'],
+                severity=c['severity'],
+                title=c['title'],
+                description=c['description'],
+                affected_resources=json.dumps(c.get('affected_resources', [])),
+                suggested_fix=c.get('suggested_fix', '')
+            )
+            db.session.add(cp)
+            saved.append(cp)
+    db.session.commit()
+
+    for cp in saved:
+        if cp.severity == 'critical':
+            broadcast_notification(cp.title, cp.description, category='emergency', severity='critical')
+        emit_conflict_alert(cp.to_dict())
+
+    log_action('Conflict Detection', f'Detected {len(saved)} new conflicts', current_user.username, 'ai')
+    return jsonify({'conflicts': [c.to_dict() for c in saved], 'total_detected': len(conflicts)})
+
+
+@app.route('/api/conflicts/<int:cid>/resolve', methods=['POST'])
+@login_required
+def resolve_conflict(cid):
+    cp = db.session.get(ConflictPrediction, cid)
+    if not cp:
+        return jsonify({'error': 'Not found'}), 404
+    cp.status = 'resolved'
+    cp.resolved_at = datetime.utcnow()
+    cp.resolved_by = current_user.username
+    db.session.commit()
+    log_action('Conflict Resolved', f'Resolved conflict #{cid}: {cp.title}', current_user.username, 'update')
+    return jsonify(cp.to_dict())
+
+
+# ─── Notification API ──────────────────────────────────────────────
+@app.route('/api/notifications', methods=['GET'])
+@login_required
+def get_notifications():
+    unread_only = request.args.get('unread_only', 'false') == 'true'
+    limit = request.args.get('limit', 50, type=int)
+    notifs = get_user_notifications(current_user.id, limit, unread_only)
+    return jsonify([n.to_dict() for n in notifs])
+
+
+@app.route('/api/notifications/unread-count', methods=['GET'])
+@login_required
+def notification_unread_count():
+    return jsonify({'count': get_unread_count(current_user.id)})
+
+
+@app.route('/api/notifications/<int:nid>/read', methods=['POST'])
+@login_required
+def mark_notification_read(nid):
+    notif = mark_read(nid, current_user.id)
+    if not notif:
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify(notif.to_dict())
+
+
+@app.route('/api/notifications/read-all', methods=['POST'])
+@login_required
+def mark_all_notifications_read():
+    mark_all_read(current_user.id)
+    return jsonify({'success': True})
+
+
+# ─── Messaging API ─────────────────────────────────────────────────
+@app.route('/api/messages', methods=['GET'])
+@login_required
+def get_messages():
+    box = request.args.get('box', 'inbox')
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+
+    query = Message.query
+    if box == 'inbox':
+        query = query.filter_by(receiver_id=current_user.id, is_archived=False)
+    elif box == 'sent':
+        query = query.filter_by(sender_id=current_user.id, is_archived=False)
+    elif box == 'archived':
+        query = query.filter(
+            ((Message.receiver_id == current_user.id) | (Message.sender_id == current_user.id)),
+            Message.is_archived == True
+        )
+
+    paginated = query.order_by(Message.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    return jsonify({
+        'total': paginated.total,
+        'page': page,
+        'per_page': per_page,
+        'pages': paginated.pages,
+        'data': [m.to_dict() for m in paginated.items]
+    })
+
+
+@app.route('/api/messages', methods=['POST'])
+@login_required
+def send_message():
+    data = request.get_json()
+    receiver_id = data.get('receiver_id')
+    if not receiver_id:
+        return jsonify({'error': 'Receiver required'}), 400
+
+    msg = Message(
+        sender_id=current_user.id,
+        receiver_id=receiver_id,
+        subject=data.get('subject', 'No Subject'),
+        body=data.get('body', ''),
+        thread_id=data.get('thread_id')
+    )
+    db.session.add(msg)
+    db.session.commit()
+
+    create_notification(
+        receiver_id,
+        f'New message from {current_user.username}',
+        msg.body[:100],
+        category='task',
+        severity='medium',
+        link=f'/messages'
+    )
+
+    log_action('Message Sent', f'To user #{receiver_id}', current_user.username, 'create')
+    return jsonify(msg.to_dict()), 201
+
+
+@app.route('/api/messages/<int:mid>/read', methods=['POST'])
+@login_required
+def mark_message_read(mid):
+    msg = Message.query.filter(
+        Message.id == mid,
+        (Message.receiver_id == current_user.id) | (Message.sender_id == current_user.id)
+    ).first()
+    if not msg:
+        return jsonify({'error': 'Not found'}), 404
+    msg.is_read = True
+    db.session.commit()
+    return jsonify(msg.to_dict())
+
+
+@app.route('/api/messages/<int:mid>/archive', methods=['POST'])
+@login_required
+def archive_message(mid):
+    msg = Message.query.filter(
+        Message.id == mid,
+        (Message.receiver_id == current_user.id) | (Message.sender_id == current_user.id)
+    ).first()
+    if not msg:
+        return jsonify({'error': 'Not found'}), 404
+    msg.is_archived = True
+    db.session.commit()
+    return jsonify(msg.to_dict())
+
+
+@app.route('/api/messages/unread-count', methods=['GET'])
+@login_required
+def message_unread_count():
+    count = Message.query.filter_by(receiver_id=current_user.id, is_read=False, is_archived=False).count()
+    return jsonify({'count': count})
+
+
+@app.route('/api/messages/thread/<int:tid>', methods=['GET'])
+@login_required
+def get_thread(tid):
+    msgs = Message.query.filter(
+        (Message.thread_id == tid) | (Message.id == tid),
+        (Message.receiver_id == current_user.id) | (Message.sender_id == current_user.id)
+    ).order_by(Message.created_at.asc()).all()
+    return jsonify([m.to_dict() for m in msgs])
+
+
+@app.route('/api/messages/users', methods=['GET'])
+@login_required
+def get_message_users():
+    users = User.query.filter(User.id != current_user.id, User.is_active == True).all()
+    return jsonify([{'id': u.id, 'username': u.username, 'role': u.role} for u in users])
 
 
 # ─── Settings API ─────────────────────────────────────────────────
@@ -1736,4 +1993,4 @@ def list_backups():
 if __name__ == '__main__':
     with app.app_context():
         init_db()
-    app.run(debug=True, port=5000)
+    socketio.run(app, debug=True, port=5000)

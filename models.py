@@ -6,6 +6,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
+import json
 
 db = SQLAlchemy()
 
@@ -355,4 +356,82 @@ class StaffDuty(db.Model):
             'location': self.location, 'date': self.date,
             'start_time': self.start_time, 'end_time': self.end_time,
             'attended': self.attended, 'check_in_time': self.check_in_time
+        }
+
+
+class Notification(db.Model):
+    __tablename__ = 'notifications'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), index=True)
+    title = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    category = db.Column(db.String(30), default='info')
+    severity = db.Column(db.String(10), default='low')
+    is_read = db.Column(db.Boolean, default=False, index=True)
+    link = db.Column(db.String(200), default='')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    user = db.relationship('User', backref='notifications')
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'user_id': self.user_id,
+            'title': self.title, 'message': self.message,
+            'category': self.category, 'severity': self.severity,
+            'is_read': self.is_read, 'link': self.link,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M') if self.created_at else ''
+        }
+
+
+class Message(db.Model):
+    __tablename__ = 'messages'
+    id = db.Column(db.Integer, primary_key=True)
+    sender_id = db.Column(db.Integer, db.ForeignKey('users.id'), index=True)
+    receiver_id = db.Column(db.Integer, db.ForeignKey('users.id'), index=True)
+    subject = db.Column(db.String(200), default='No Subject')
+    body = db.Column(db.Text, nullable=False)
+    is_read = db.Column(db.Boolean, default=False, index=True)
+    is_archived = db.Column(db.Boolean, default=False)
+    thread_id = db.Column(db.Integer, db.ForeignKey('messages.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_messages')
+    receiver = db.relationship('User', foreign_keys=[receiver_id], backref='received_messages')
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'sender_id': self.sender_id,
+            'receiver_id': self.receiver_id, 'subject': self.subject,
+            'body': self.body, 'is_read': self.is_read,
+            'is_archived': self.is_archived, 'thread_id': self.thread_id,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M') if self.created_at else '',
+            'sender_name': self.sender.username if self.sender else '',
+            'receiver_name': self.receiver.username if self.receiver else ''
+        }
+
+
+class ConflictPrediction(db.Model):
+    __tablename__ = 'conflict_predictions'
+    id = db.Column(db.Integer, primary_key=True)
+    conflict_type = db.Column(db.String(40), nullable=False, index=True)
+    severity = db.Column(db.String(10), default='medium')
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    affected_resources = db.Column(db.Text, default='[]')
+    suggested_fix = db.Column(db.Text, default='')
+    status = db.Column(db.String(20), default='detected', index=True)
+    detected_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+    resolved_by = db.Column(db.String(80), default='')
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'conflict_type': self.conflict_type,
+            'severity': self.severity, 'title': self.title,
+            'description': self.description,
+            'affected_resources': json.loads(self.affected_resources or '[]'),
+            'suggested_fix': self.suggested_fix,
+            'status': self.status,
+            'detected_at': self.detected_at.strftime('%Y-%m-%d %H:%M') if self.detected_at else '',
+            'resolved_at': self.resolved_at.strftime('%Y-%m-%d %H:%M') if self.resolved_at else ''
         }

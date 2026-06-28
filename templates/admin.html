@@ -11,6 +11,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap"
         rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
     <link rel="stylesheet" href="/static/css/style.css">
     <meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
@@ -48,6 +49,8 @@
             <a class="nav-item" data-section="staffduties"><i class="fas fa-user-tie"></i><span>Staff Duties</span></a>
             <a class="nav-item" data-section="emergency"><i
                     class="fas fa-triangle-exclamation"></i><span>Emergency</span></a>
+            <a class="nav-item" data-section="messages"><i class="fas fa-envelope"></i><span>Messages</span></a>
+            <a class="nav-item" data-section="conflicts"><i class="fas fa-shield-virus"></i><span>Conflicts</span></a>
             <a class="nav-item" data-section="audit"><i class="fas fa-scroll"></i><span>Audit Log</span></a>
             <a class="nav-item" data-section="settings"><i class="fas fa-gear"></i><span>Settings</span></a>
         </nav>
@@ -67,6 +70,14 @@
                 <div class="header-badge" id="healthBadge" title="Resource Health">
                     <i class="fas fa-heart-pulse"></i> <span id="healthScore">--</span>%
                 </div>
+                <button class="notification-bell" id="notifBell" onclick="toggleNotifPanel()">
+                    <i class="fas fa-bell"></i>
+                    <span class="notif-badge" id="notifBadge">0</span>
+                </button>
+                <button class="notification-bell" id="msgBell" onclick="navigateTo('messages')">
+                    <i class="fas fa-envelope"></i>
+                    <span class="notif-badge" id="msgBadge">0</span>
+                </button>
                 <div class="header-user">
                     <i class="fas fa-shield-halved"></i> Admin
                 </div>
@@ -122,6 +133,18 @@
         </div>
     </div>
 
+    <!-- Notification Panel -->
+    <div class="notif-panel" id="notifPanel" style="display:none">
+        <div class="notif-panel-header">
+            <h3>Notifications</h3>
+            <button class="btn btn-sm btn-secondary" onclick="markAllNotifsRead()">Mark all read</button>
+        </div>
+        <div class="notif-panel-body" id="notifPanelBody">
+            <p class="notif-empty">No notifications yet</p>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 

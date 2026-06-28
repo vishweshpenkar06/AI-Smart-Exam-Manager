@@ -48,6 +48,7 @@ function navigateTo(section) {
         duties: 'Duty List', inventory: 'Inventory Management',
         restocks: 'Restock Requests', branches: 'Branch Management',
         staffduties: 'Staff Duties', emergency: 'Emergency Handler',
+        messages: 'Messages', conflicts: 'Conflict Monitor',
         audit: 'Audit Log', settings: 'Settings'
     };
     document.getElementById('pageTitle').textContent = titles[section] || section;
@@ -60,6 +61,7 @@ function navigateTo(section) {
         duties: renderDuties, inventory: renderInventory,
         restocks: renderRestocks, branches: renderBranches,
         staffduties: renderStaffDuties, emergency: renderEmergency,
+        messages: renderMessages, conflicts: renderConflicts,
         audit: renderAudit, settings: renderSettings
     };
 
@@ -1153,4 +1155,268 @@ async function saveSettings(){
     await api('/api/settings','POST',{college_name:document.getElementById('sCollegeName').value,college_code:document.getElementById('sCollegeCode').value,address:document.getElementById('sAddress').value,phone:document.getElementById('sPhone').value,email:document.getElementById('sEmail').value,morning_start:document.getElementById('sMornStart').value,morning_end:document.getElementById('sMornEnd').value,afternoon_start:document.getElementById('sAftnStart').value,afternoon_end:document.getElementById('sAftnEnd').value,sessions_per_day:document.getElementById('sSessions').value});
     toast('Settings saved!','success');
   }catch(e){toast(e.message,'error');}
+}
+
+// ── WebSocket Real-time Notifications ──────────────────────────
+let socket = null;
+function initSocket() {
+    if (typeof io === 'undefined') return;
+    socket = io();
+    socket.on('connect', () => { console.log('WebSocket connected'); });
+    socket.on('notification', (data) => {
+        toast(`${data.title}: ${data.message}`, data.severity === 'critical' ? 'error' : 'info');
+        loadUnreadCounts();
+    });
+    socket.on('conflict_alert', (data) => {
+        toast(`Conflict detected: ${data.title}`, 'warning');
+        if (State.currentSection === 'conflicts') renderConflicts();
+    });
+}
+document.addEventListener('DOMContentLoaded', initSocket);
+
+async function loadUnreadCounts() {
+    try {
+        const [notifRes, msgRes] = await Promise.all([
+            fetch('/api/notifications/unread-count'),
+            fetch('/api/messages/unread-count')
+        ]);
+        const notifData = await notifRes.json();
+        const msgData = await msgRes.json();
+        const notifBadge = document.getElementById('notifBadge');
+        const msgBadge = document.getElementById('msgBadge');
+        if (notifBadge) {
+            notifBadge.textContent = notifData.count;
+            notifBadge.style.display = notifData.count > 0 ? 'flex' : 'none';
+        }
+        if (msgBadge) {
+            msgBadge.textContent = msgData.count;
+            msgBadge.style.display = msgData.count > 0 ? 'flex' : 'none';
+        }
+    } catch (e) {}
+}
+loadUnreadCounts();
+setInterval(loadUnreadCounts, 30000);
+
+function toggleNotifPanel() {
+    let panel = document.getElementById('notifPanel');
+    if (panel) { panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; return; }
+    panel = document.createElement('div');
+    panel.id = 'notifPanel';
+    panel.className = 'notif-panel';
+    panel.innerHTML = `
+        <div class="notif-panel-header">
+            <h3><i class="fas fa-bell"></i> Notifications</h3>
+            <button class="btn btn-sm btn-secondary" onclick="markAllNotifsRead()"><i class="fas fa-check-double"></i> Mark all read</button>
+        </div>
+        <div class="notif-panel-body" id="notifPanelBody">
+            <p class="notif-empty"><i class="fas fa-spinner fa-spin"></i> Loading...</p>
+        </div>`;
+    document.body.appendChild(panel);
+    fetchNotifPanel();
+    document.addEventListener('click', function closePanel(e) {
+        if (!panel.contains(e.target) && !document.getElementById('notifBell').contains(e.target)) {
+            panel.style.display = 'none';
+            document.removeEventListener('click', closePanel);
+        }
+    });
+}
+
+async function fetchNotifPanel() {
+    try {
+        const notifs = await api('/api/notifications?limit=20');
+        const body = document.getElementById('notifPanelBody');
+        if (!notifs.length) { body.innerHTML = '<p class="notif-empty"><i class="fas fa-bell-slash"></i> No notifications</p>'; return; }
+        body.innerHTML = notifs.map(n => `
+            <div class="notif-item ${n.is_read ? '' : 'unread'}" onclick="markNotifRead(${n.id})">
+                <div class="notif-item-title ${n.category}"><i class="fas fa-${n.severity==='critical'?'exclamation-triangle':n.category==='emergency'?'triangle-exclamation':n.category==='task'?'clipboard-check':'info-circle'}"></i> ${n.title}</div>
+                <div class="notif-item-message">${n.message}</div>
+                <div class="notif-item-time"><i class="far fa-clock"></i> ${n.created_at}</div>
+            </div>`).join('');
+    } catch (e) {}
+}
+
+async function markNotifRead(id) {
+    try { await api(`/api/notifications/${id}/read`, 'POST'); loadUnreadCounts(); } catch (e) {}
+}
+
+async function markAllNotifsRead() {
+    try { await api('/api/notifications/read-all', 'POST'); fetchNotifPanel(); loadUnreadCounts(); toast('All notifications marked as read', 'success'); } catch (e) {}
+}
+
+// ── Messages Section ───────────────────────────────────────────
+let msgCurrentBox = 'inbox';
+async function renderMessages() {
+    const ca = document.getElementById('contentArea');
+    ca.innerHTML = `<div style="text-align:center;padding:60px"><i class="fas fa-spinner fa-spin" style="font-size:32px;color:var(--accent)"></i></div>`;
+    try {
+        const data = await api(`/api/messages?box=${msgCurrentBox}&per_page=50`);
+        ca.innerHTML = `
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><i class="fas fa-envelope"></i>Messages</div>
+                    <div style="display:flex;gap:8px">
+                        <button class="btn btn-primary" onclick="showComposeModal()"><i class="fas fa-pen"></i> Compose</button>
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;margin-bottom:16px">
+                    <button class="btn ${msgCurrentBox==='inbox'?'btn-primary':'btn-secondary'}" onclick="msgCurrentBox='inbox';renderMessages()"><i class="fas fa-inbox"></i> Inbox</button>
+                    <button class="btn ${msgCurrentBox==='sent'?'btn-primary':'btn-secondary'}" onclick="msgCurrentBox='sent';renderMessages()"><i class="fas fa-paper-plane"></i> Sent</button>
+                    <button class="btn ${msgCurrentBox==='archived'?'btn-primary':'btn-secondary'}" onclick="msgCurrentBox='archived';renderMessages()"><i class="fas fa-archive"></i> Archived</button>
+                </div>
+                <div id="msgList">${renderMessageList(data.data)}</div>
+            </div>`;
+    } catch (e) { ca.innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>${e.message}</p></div>`; }
+}
+
+function renderMessageList(messages) {
+    if (!messages.length) return '<div class="empty-state"><i class="fas fa-envelope-open"></i><p>No messages in this folder</p></div>';
+    return messages.map(m => `
+        <div class="activity-item" style="cursor:pointer;${m.is_read?'opacity:0.7':''}" onclick="viewMessage(${m.id})">
+            <div class="activity-icon ${m.is_read?'info':'create'}"><i class="fas fa-${m.sender_id===currentUserId?'paper-plane':'envelope'}"></i></div>
+            <div class="activity-text">
+                <strong>${m.sender_id===currentUserId?'To: '+m.receiver_name:'From: '+m.sender_name}</strong>
+                <br><span style="font-size:13px">${m.subject}</span>
+                <br><span style="font-size:12px;color:var(--text-muted)">${m.body.substring(0,80)}${m.body.length>80?'...':''}</span>
+                <div class="activity-time"><i class="far fa-clock"></i> ${m.created_at}</div>
+            </div>
+            <div style="display:flex;gap:4px">
+                ${!m.is_read?'<span class="badge badge-success">New</span>':''}
+                <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();archiveMsg(${m.id})" title="Archive"><i class="fas fa-archive"></i></button>
+            </div>
+        </div>`).join('');
+}
+
+let currentUserId = 0;
+(async function(){ try { const me = await api('/api/settings'); } catch(e){} try { const users = await api('/api/messages/users'); } catch(e){} })();
+
+async function viewMessage(id) {
+    try {
+        const msgs = await api(`/api/messages/thread/${id}`);
+        if (msgs.length) { await api(`/api/messages/${id}/read`, 'POST'); loadUnreadCounts(); }
+        const ca = document.getElementById('contentArea');
+        ca.innerHTML = `
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><i class="fas fa-arrow-left" style="cursor:pointer;margin-right:8px" onclick="renderMessages()"></i>Message Thread</div>
+                </div>
+                ${msgs.map(m => `
+                    <div class="msg-thread">
+                        <div style="display:flex;justify-content:space-between">
+                            <div class="msg-thread-sender">${m.sender_name}</div>
+                            <div class="msg-thread-time">${m.created_at}</div>
+                        </div>
+                        <div style="font-size:13px;font-weight:600;margin-top:4px">${m.subject}</div>
+                        <div class="msg-thread-body">${m.body}</div>
+                    </div>`).join('')}
+                <div style="margin-top:16px">
+                    <textarea id="replyBody" class="form-control" rows="3" placeholder="Type your reply..."></textarea>
+                    <button class="btn btn-primary" style="margin-top:8px" onclick="sendReply(${msgs[0]?.sender_id || 0}, '${msgs[0]?.subject || ''}', ${msgs[0]?.thread_id || msgs[0]?.id || 0})"><i class="fas fa-reply"></i> Reply</button>
+                </div>
+            </div>`;
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function sendReply(receiverId, subject, threadId) {
+    const body = document.getElementById('replyBody').value.trim();
+    if (!body) { toast('Please type a message', 'warning'); return; }
+    try {
+        await api('/api/messages', 'POST', { receiver_id: receiverId, subject, body, thread_id: threadId });
+        toast('Reply sent!', 'success');
+        viewMessage(threadId);
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function archiveMsg(id) {
+    try { await api(`/api/messages/${id}/archive`, 'POST'); toast('Message archived', 'success'); renderMessages(); } catch (e) { toast(e.message, 'error'); }
+}
+
+async function showComposeModal() {
+    let users = [];
+    try { users = await api('/api/messages/users'); } catch(e) {}
+    const overlay = document.createElement('div');
+    overlay.className = 'compose-modal';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="compose-card">
+            <div class="compose-card-header">
+                <h3 style="font-size:16px"><i class="fas fa-pen"></i> New Message</h3>
+                <button class="btn btn-sm btn-secondary" onclick="this.closest('.compose-modal').remove()"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="compose-card-body">
+                <label>To</label>
+                <select id="msgReceiver">
+                    <option value="">Select recipient...</option>
+                    ${users.map(u => `<option value="${u.id}">${u.username} (${u.role})</option>`).join('')}
+                </select>
+                <label>Subject</label>
+                <input type="text" id="msgSubject" placeholder="Message subject...">
+                <label>Message</label>
+                <textarea id="msgBody" placeholder="Type your message..."></textarea>
+            </div>
+            <div class="compose-card-footer">
+                <button class="btn btn-secondary" onclick="this.closest('.compose-modal').remove()">Cancel</button>
+                <button class="btn btn-primary" onclick="sendNewMessage(this)"><i class="fas fa-paper-plane"></i> Send</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+async function sendNewMessage(btn) {
+    const receiverId = document.getElementById('msgReceiver').value;
+    const subject = document.getElementById('msgSubject').value.trim();
+    const body = document.getElementById('msgBody').value.trim();
+    if (!receiverId || !body) { toast('Recipient and message are required', 'warning'); return; }
+    try {
+        await api('/api/messages', 'POST', { receiver_id: parseInt(receiverId), subject: subject || 'No Subject', body });
+        document.querySelector('.compose-modal').remove();
+        toast('Message sent!', 'success');
+        renderMessages();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+// ── Conflict Monitor Section ───────────────────────────────────
+async function renderConflicts() {
+    const ca = document.getElementById('contentArea');
+    ca.innerHTML = `<div style="text-align:center;padding:60px"><i class="fas fa-spinner fa-spin" style="font-size:32px;color:var(--accent)"></i></div>`;
+    try {
+        const conflicts = await api('/api/conflicts');
+        ca.innerHTML = `
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><i class="fas fa-shield-virus"></i>Conflict Monitor</div>
+                    <button class="btn btn-primary" onclick="runConflictScan()"><i class="fas fa-radar"></i> Run Scan</button>
+                </div>
+                <div id="conflictList">${renderConflictList(conflicts)}</div>
+            </div>`;
+    } catch (e) { ca.innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>${e.message}</p></div>`; }
+}
+
+function renderConflictList(conflicts) {
+    if (!conflicts.length) return '<div class="empty-state"><i class="fas fa-shield-check"></i><p>No conflicts detected - system is healthy!</p></div>';
+    return conflicts.map(c => `
+        <div class="conflict-card ${c.severity}">
+            <div class="conflict-header">
+                <div class="conflict-title"><i class="fas fa-${c.severity==='critical'?'exclamation-triangle':c.severity==='warning'?'exclamation-circle':'info-circle'}"></i> ${c.title}</div>
+                <span class="conflict-severity ${c.severity}">${c.severity}</span>
+            </div>
+            <div class="conflict-desc">${c.description}</div>
+            ${c.suggested_fix ? `<div class="conflict-fix"><i class="fas fa-lightbulb"></i> ${c.suggested_fix}</div>` : ''}
+            <div class="conflict-footer">
+                <span style="font-size:11px;color:var(--text-muted)"><i class="far fa-clock"></i> ${c.detected_at}</span>
+                ${c.status !== 'resolved' ? `<button class="btn btn-sm btn-success" onclick="resolveConflict(${c.id})"><i class="fas fa-check"></i> Resolve</button>` : '<span class="badge badge-success">Resolved</span>'}
+            </div>
+        </div>`).join('');
+}
+
+async function runConflictScan() {
+    toast('Running conflict scan...', 'info');
+    try {
+        const result = await api('/api/conflicts/detect', 'POST');
+        toast(`Scan complete: ${result.conflicts?.length || 0} conflicts found`, result.conflicts?.length > 0 ? 'warning' : 'success');
+        renderConflicts();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function resolveConflict(id) {
+    try { await api(`/api/conflicts/${id}/resolve`, 'POST'); toast('Conflict resolved', 'success'); renderConflicts(); } catch (e) { toast(e.message, 'error'); }
 }

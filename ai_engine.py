@@ -553,3 +553,155 @@ def _generate_recommendations(cap_score, inv_score, sup_score, total_cap, total_
     if cap_score >= 90 and inv_score >= 90 and sup_score >= 90:
         recs.append("✅ All resources are in excellent condition. Ready for exam scheduling.")
     return recs
+
+
+class ConflictPredictor:
+    """Proactive conflict detection — scans for issues before they become emergencies."""
+
+    @staticmethod
+    def detect_all_conflicts():
+        """Run all conflict detection checks and return a list of conflict dicts."""
+        conflicts = []
+        try:
+            from models import Exam, Room, Invigilator, Student, SeatingAssignment, DutyAssignment, InventoryItem
+            from app import app, db
+
+            with app.app_context():
+                conflicts += ConflictPredictor._check_room_overcrowding()
+                conflicts += ConflictPredictor._check_invigilator_burnout()
+                conflicts += ConflictPredictor._check_schedule_gaps()
+                conflicts += ConflictPredictor._check_inventory_critical()
+                conflicts += ConflictPredictor._check_student_conflicts()
+        except Exception:
+            pass
+        return conflicts
+
+    @staticmethod
+    def _check_room_overcrowding():
+        from models import Exam, SeatingAssignment
+        from app import db
+        conflicts = []
+        exams = Exam.query.filter_by(status='scheduled').all()
+        for exam in exams:
+            if not exam.room:
+                continue
+            student_count = SeatingAssignment.query.filter_by(exam_id=exam.id).count()
+            capacity = exam.room.capacity
+            if capacity > 0:
+                utilization = (student_count / capacity) * 100
+                if utilization > 90:
+                    conflicts.append({
+                        'conflict_type': 'room_overcrowding',
+                        'severity': 'critical' if utilization > 95 else 'warning',
+                        'title': f'Room overcrowding: {exam.room.name}',
+                        'description': f'{exam.room.name} is at {utilization:.0f}% capacity ({student_count}/{capacity} seats) for {exam.subject.name if exam.subject else "exam"}',
+                        'affected_resources': [exam.room.name, exam.subject.name if exam.subject else ''],
+                        'suggested_fix': f'Consider moving to a larger room or splitting across multiple rooms'
+                    })
+        return conflicts
+
+    @staticmethod
+    def _check_invigilator_burnout():
+        from models import Invigilator
+        conflicts = []
+        invigilators = Invigilator.query.filter_by(available=True).all()
+        for inv in invigilators:
+            if inv.fatigue_score > 80:
+                conflicts.append({
+                    'conflict_type': 'invigilator_burnout',
+                    'severity': 'warning',
+                    'title': f'Invigilator burnout risk: {inv.name}',
+                    'description': f'{inv.name} has a fatigue score of {inv.fatigue_score:.0f} (threshold: 80). Risk of performance degradation.',
+                    'affected_resources': [inv.name],
+                    'suggested_fix': f'Reduce duty load for {inv.name} or assign lighter duties'
+                })
+            if inv.consecutive_heavy >= 3:
+                conflicts.append({
+                    'conflict_type': 'invigilator_burnout',
+                    'severity': 'warning',
+                    'title': f'Consecutive heavy duties: {inv.name}',
+                    'description': f'{inv.name} has {inv.consecutive_heavy} consecutive heavy duty assignments.',
+                    'affected_resources': [inv.name],
+                    'suggested_fix': f'Schedule a rest day for {inv.name} between heavy duties'
+                })
+        return conflicts
+
+    @staticmethod
+    def _check_schedule_gaps():
+        from models import Exam, Subject
+        from collections import defaultdict
+        conflicts = []
+        exams = Exam.query.filter_by(status='scheduled').all()
+        by_branch_date = defaultdict(list)
+        for exam in exams:
+            if exam.subject:
+                key = (exam.subject.branch, exam.date)
+                by_branch_date[key].append(exam)
+        for (branch, date), branch_exams in by_branch_date.items():
+            if len(branch_exams) > 2:
+                conflicts.append({
+                    'conflict_type': 'schedule_gap',
+                    'severity': 'info',
+                    'title': f'Dense schedule: {branch} on {date}',
+                    'description': f'{branch} has {len(branch_exams)} exams scheduled on {date}. Students may face scheduling pressure.',
+                    'affected_resources': [branch, date],
+                    'suggested_fix': f'Spread {branch} exams across more days to reduce student stress'
+                })
+        return conflicts
+
+    @staticmethod
+    def _check_inventory_critical():
+        from models import InventoryItem
+        from datetime import datetime, timedelta
+        conflicts = []
+        items = InventoryItem.query.all()
+        for item in items:
+            if item.usage_rate > 0:
+                days_until_low = (item.quantity - item.min_threshold) / item.usage_rate
+                if days_until_low < 3 and item.quantity <= item.min_threshold:
+                    conflicts.append({
+                        'conflict_type': 'inventory_critical',
+                        'severity': 'critical' if item.quantity <= item.min_threshold * 0.5 else 'warning',
+                        'title': f'Critical inventory: {item.name}',
+                        'description': f'{item.name} has only {item.quantity} {item.unit} remaining (min: {item.min_threshold}). Estimated depletion in {days_until_low:.0f} days.',
+                        'affected_resources': [item.name],
+                        'suggested_fix': f'Immediately restock {item.name} — order at least {item.min_threshold * 2 - item.quantity} units'
+                    })
+            elif item.quantity <= item.min_threshold:
+                conflicts.append({
+                    'conflict_type': 'inventory_critical',
+                    'severity': 'warning',
+                    'title': f'Low inventory: {item.name}',
+                    'description': f'{item.name} is below minimum threshold ({item.quantity}/{item.min_threshold} {item.unit}).',
+                    'affected_resources': [item.name],
+                    'suggested_fix': f'Create a restock request for {item.name}'
+                })
+        return conflicts
+
+    @staticmethod
+    def _check_student_conflicts():
+        from models import SeatingAssignment, Exam
+        from collections import defaultdict
+        conflicts = []
+        student_exams = defaultdict(list)
+        assignments = SeatingAssignment.query.all()
+        for sa in assignments:
+            student_exams[sa.student_id].append(sa)
+        for student_id, exams in student_exams.items():
+            exam_times = defaultdict(list)
+            for sa in exams:
+                exam = sa.exam
+                if exam:
+                    key = (exam.date, exam.start_time)
+                    exam_times[key].append(sa)
+            for (date, time), exam_list in exam_times.items():
+                if len(exam_list) > 1:
+                    conflicts.append({
+                        'conflict_type': 'student_double_book',
+                        'severity': 'critical',
+                        'title': f'Student double-booking detected',
+                        'description': f'Student #{student_id} is assigned to {len(exam_list)} exams at {time} on {date}',
+                        'affected_resources': [f'Student #{student_id}'],
+                        'suggested_fix': 'Resolve scheduling conflict by reassigning one exam to a different time slot'
+                    })
+        return conflicts

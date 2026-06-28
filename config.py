@@ -50,12 +50,12 @@ class DevelopmentConfig(Config):
 
 
 class ProductionConfig(Config):
-    """Production — debug off, strict security"""
+    """Production — debug off, strict security, PostgreSQL"""
     DEBUG = False
     TESTING = False
     SQLALCHEMY_DATABASE_URI = os.getenv(
         'DATABASE_URL',
-        'sqlite:///exam_manager.db'
+        'postgresql://exam_user:exam_pass@localhost:5432/exam_manager'
     )
     SESSION_COOKIE_SECURE = True
 
