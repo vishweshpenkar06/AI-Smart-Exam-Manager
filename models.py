@@ -433,5 +433,6 @@ class ConflictPrediction(db.Model):
             'suggested_fix': self.suggested_fix,
             'status': self.status,
             'detected_at': self.detected_at.strftime('%Y-%m-%d %H:%M') if self.detected_at else '',
-            'resolved_at': self.resolved_at.strftime('%Y-%m-%d %H:%M') if self.resolved_at else ''
+            'resolved_at': self.resolved_at.strftime('%Y-%m-%d %H:%M') if self.resolved_at else '',
+            'resolved_by': self.resolved_by
         }

@@ -1417,6 +1417,126 @@ def resolve_conflict(cid):
     return jsonify(cp.to_dict())
 
 
+# ─── Analytics API ────────────────────────────────────────────────
+@app.route('/api/analytics/overview', methods=['GET'])
+@login_required
+def analytics_overview():
+    total_exams = Exam.query.count()
+    scheduled = Exam.query.filter_by(status='scheduled').count()
+    completed = Exam.query.filter_by(status='completed').count()
+    total_rooms = Room.query.count()
+    available_rooms = Room.query.filter_by(is_available=True).count()
+    total_invs = Invigilator.query.count()
+    available_invs = Invigilator.query.filter_by(available=True).count()
+    total_students = Student.query.count()
+    total_inventory = InventoryItem.query.count()
+    low_stock = InventoryItem.query.filter(
+        InventoryItem.quantity <= InventoryItem.min_threshold
+    ).count()
+    total_duties = DutyAssignment.query.count()
+    attended_duties = DutyAssignment.query.filter_by(attended=True).count()
+    total_emergencies = EmergencyLog.query.count()
+    unresolved_emergencies = EmergencyLog.query.filter_by(resolved=False).count()
+    active_conflicts = ConflictPrediction.query.filter_by(status='detected').count()
+
+    duty_completion = round((attended_duties / max(total_duties, 1)) * 100, 1)
+
+    return jsonify({
+        'exams': {'total': total_exams, 'scheduled': scheduled, 'completed': completed},
+        'rooms': {'total': total_rooms, 'available': available_rooms},
+        'invigilators': {'total': total_invs, 'available': available_invs},
+        'students': total_students,
+        'inventory': {'total': total_inventory, 'low_stock': low_stock},
+        'duties': {'total': total_duties, 'attended': attended_duties, 'completion_rate': duty_completion},
+        'emergencies': {'total': total_emergencies, 'unresolved': unresolved_emergencies},
+        'active_conflicts': active_conflicts
+    })
+
+
+@app.route('/api/analytics/trends', methods=['GET'])
+@login_required
+def analytics_trends():
+    from collections import defaultdict
+
+    exams_by_date = defaultdict(int)
+    exams = Exam.query.all()
+    for e in exams:
+        exams_by_date[e.date] += 1
+
+    duties_by_date = defaultdict(lambda: {'total': 0, 'attended': 0})
+    duties = DutyAssignment.query.all()
+    for d in duties:
+        duties_by_date[d.date]['total'] += 1
+        if d.attended:
+            duties_by_date[d.date]['attended'] += 1
+
+    emergencies_by_date = defaultdict(int)
+    emergencies = EmergencyLog.query.all()
+    for em in emergencies:
+        day = em.timestamp.strftime('%Y-%m-%d') if em.timestamp else ''
+        emergencies_by_date[day] += 1
+
+    sorted_dates = sorted(set(list(exams_by_date.keys()) + list(duties_by_date.keys()) + list(emergencies_by_date.keys())))
+
+    return jsonify({
+        'dates': sorted_dates[-30:],
+        'exams': [exams_by_date[d] for d in sorted_dates[-30:]],
+        'duty_total': [duties_by_date[d]['total'] for d in sorted_dates[-30:]],
+        'duty_attended': [duties_by_date[d]['attended'] for d in sorted_dates[-30:]],
+        'emergencies': [emergencies_by_date[d] for d in sorted_dates[-30:]]
+    })
+
+
+@app.route('/api/analytics/invigilator-load', methods=['GET'])
+@login_required
+def invigilator_load():
+    invigilators = Invigilator.query.all()
+    data = []
+    for inv in invigilators:
+        duty_count = DutyAssignment.query.filter_by(invigilator_id=inv.id).count()
+        attended = DutyAssignment.query.filter_by(invigilator_id=inv.id, attended=True).count()
+        data.append({
+            'id': inv.id,
+            'name': inv.name,
+            'department': inv.department,
+            'duty_count': duty_count,
+            'attended': attended,
+            'fatigue_score': inv.fatigue_score,
+            'max_duties': inv.max_duties,
+            'utilization': round((duty_count / max(inv.max_duties, 1)) * 100, 1)
+        })
+    data.sort(key=lambda x: x['duty_count'], reverse=True)
+    return jsonify(data)
+
+
+@app.route('/api/analytics/room-utilization', methods=['GET'])
+@login_required
+def room_utilization():
+    rooms = Room.query.all()
+    data = []
+    for room in rooms:
+        exam_count = Exam.query.filter_by(room_id=room.id).count()
+        scheduled = Exam.query.filter_by(room_id=room.id, status='scheduled').count()
+        seat_usage = 0
+        exams_in_room = Exam.query.filter_by(room_id=room.id).all()
+        for ex in exams_in_room:
+            seat_usage += SeatingAssignment.query.filter_by(exam_id=ex.id).count()
+        avg_utilization = round((seat_usage / max(exam_count * room.capacity, 1)) * 100, 1) if room.capacity > 0 else 0
+        data.append({
+            'id': room.id,
+            'name': room.name,
+            'capacity': room.capacity,
+            'room_type': room.room_type,
+            'is_available': room.is_available,
+            'exam_count': exam_count,
+            'scheduled': scheduled,
+            'total_seats_used': seat_usage,
+            'avg_utilization': avg_utilization
+        })
+    data.sort(key=lambda x: x['avg_utilization'], reverse=True)
+    return jsonify(data)
+
+
 # ─── Notification API ──────────────────────────────────────────────
 @app.route('/api/notifications', methods=['GET'])
 @login_required

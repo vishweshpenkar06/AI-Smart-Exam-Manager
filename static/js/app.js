@@ -49,7 +49,7 @@ function navigateTo(section) {
         restocks: 'Restock Requests', branches: 'Branch Management',
         staffduties: 'Staff Duties', emergency: 'Emergency Handler',
         messages: 'Messages', conflicts: 'Conflict Monitor',
-        audit: 'Audit Log', settings: 'Settings'
+        analytics: 'Analytics Dashboard', audit: 'Audit Log', settings: 'Settings'
     };
     document.getElementById('pageTitle').textContent = titles[section] || section;
 
@@ -62,7 +62,7 @@ function navigateTo(section) {
         restocks: renderRestocks, branches: renderBranches,
         staffduties: renderStaffDuties, emergency: renderEmergency,
         messages: renderMessages, conflicts: renderConflicts,
-        audit: renderAudit, settings: renderSettings
+        analytics: renderAnalytics, audit: renderAudit, settings: renderSettings
     };
 
     const fn = sectionFns[section];
@@ -1419,4 +1419,134 @@ async function runConflictScan() {
 
 async function resolveConflict(id) {
     try { await api(`/api/conflicts/${id}/resolve`, 'POST'); toast('Conflict resolved', 'success'); renderConflicts(); } catch (e) { toast(e.message, 'error'); }
+}
+
+// ── Analytics Dashboard Section ──────────────────────────────────
+async function renderAnalytics() {
+    const ca = document.getElementById('contentArea');
+    ca.innerHTML = `<div style="text-align:center;padding:60px"><i class="fas fa-spinner fa-spin" style="font-size:32px;color:var(--accent)"></i></div>`;
+    try {
+        const [overview, trends, invLoad, roomUtil] = await Promise.all([
+            api('/api/analytics/overview'),
+            api('/api/analytics/trends'),
+            api('/api/analytics/invigilator-load'),
+            api('/api/analytics/room-utilization')
+        ]);
+
+        ca.innerHTML = `
+            <div class="card" style="margin-bottom:20px">
+                <div class="card-header">
+                    <div class="card-title"><i class="fas fa-chart-line"></i>System Overview</div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px">
+                    <div class="stat-card blue"><div class="stat-icon"><i class="fas fa-calendar-check"></i></div><div class="stat-number">${overview.exams.total}</div><div class="stat-text">Total Exams</div><div class="stat-sub">${overview.exams.scheduled} scheduled</div></div>
+                    <div class="stat-card green"><div class="stat-icon"><i class="fas fa-door-open"></i></div><div class="stat-number">${overview.rooms.available}/${overview.rooms.total}</div><div class="stat-text">Available Rooms</div></div>
+                    <div class="stat-card purple"><div class="stat-icon"><i class="fas fa-user-shield"></i></div><div class="stat-number">${overview.invigilators.available}/${overview.invigilators.total}</div><div class="stat-text">Available Invigilators</div></div>
+                    <div class="stat-card amber"><div class="stat-icon"><i class="fas fa-clipboard-check"></i></div><div class="stat-number">${overview.duties.completion_rate}%</div><div class="stat-text">Duty Completion</div></div>
+                    <div class="stat-card cyan"><div class="stat-icon"><i class="fas fa-boxes-stacked"></i></div><div class="stat-number">${overview.inventory.low_stock}</div><div class="stat-text">Low Stock Items</div></div>
+                    <div class="stat-card pink"><div class="stat-icon"><i class="fas fa-shield-virus"></i></div><div class="stat-number">${overview.active_conflicts}</div><div class="stat-text">Active Conflicts</div></div>
+                </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+                <div class="card">
+                    <div class="card-header"><div class="card-title"><i class="fas fa-chart-area"></i>Exam & Duty Trends</div></div>
+                    <div style="height:280px"><canvas id="trendChart"></canvas></div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><div class="card-title"><i class="fas fa-chart-bar"></i>Invigilator Load</div></div>
+                    <div style="height:280px"><canvas id="invLoadChart"></canvas></div>
+                </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+                <div class="card">
+                    <div class="card-header"><div class="card-title"><i class="fas fa-door-open"></i>Room Utilization</div></div>
+                    <div style="height:280px"><canvas id="roomChart"></canvas></div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><div class="card-title"><i class="fas fa-chart-pie"></i>Duty Attendance</div></div>
+                    <div style="height:280px"><canvas id="dutyPieChart"></canvas></div>
+                </div>
+            </div>`;
+
+        renderTrendChart(trends);
+        renderInvLoadChart(invLoad);
+        renderRoomChart(roomUtil);
+        renderDutyPieChart(overview.duties);
+    } catch (e) {
+        ca.innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>${e.message}</p></div>`;
+    }
+}
+
+function renderTrendChart(data) {
+    const ctx = document.getElementById('trendChart');
+    if (!ctx) return;
+    if (State.charts.trend) State.charts.trend.destroy();
+    const labels = data.dates.map(d => d.substring(5));
+    State.charts.trend = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Exams', data: data.exams, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.1)', fill: true, tension: 0.3 },
+                { label: 'Duties', data: data.duty_total, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', fill: true, tension: 0.3 },
+                { label: 'Emergencies', data: data.emergencies, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.3 }
+            ]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } }, scales: { x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(148,163,184,0.05)' } }, y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.05)' } } } }
+    });
+}
+
+function renderInvLoadChart(data) {
+    const ctx = document.getElementById('invLoadChart');
+    if (!ctx) return;
+    if (State.charts.invLoad) State.charts.invLoad.destroy();
+    const top8 = data.slice(0, 8);
+    State.charts.invLoad = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: top8.map(d => d.name.split(' ').pop()),
+            datasets: [
+                { label: 'Duties Assigned', data: top8.map(d => d.duty_count), backgroundColor: 'rgba(56,189,248,0.7)' },
+                { label: 'Attended', data: top8.map(d => d.attended), backgroundColor: 'rgba(16,185,129,0.7)' },
+                { label: 'Fatigue Score', data: top8.map(d => d.fatigue_score), backgroundColor: 'rgba(239,68,68,0.5)' }
+            ]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } }, scales: { x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(148,163,184,0.05)' } }, y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.05)' } } } }
+    });
+}
+
+function renderRoomChart(data) {
+    const ctx = document.getElementById('roomChart');
+    if (!ctx) return;
+    if (State.charts.roomUtil) State.charts.roomUtil.destroy();
+    const available = data.filter(d => d.is_available);
+    State.charts.roomUtil = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: available.map(d => d.name.length > 12 ? d.name.substring(0,12)+'...' : d.name),
+            datasets: [{
+                label: 'Avg Utilization %',
+                data: available.map(d => d.avg_utilization),
+                backgroundColor: available.map(d => d.avg_utilization > 80 ? 'rgba(239,68,68,0.7)' : d.avg_utilization > 50 ? 'rgba(245,158,11,0.7)' : 'rgba(16,185,129,0.7)'),
+                borderRadius: 6
+            }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { max: 100, ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.05)' } }, y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(148,163,184,0.05)' } } } }
+    });
+}
+
+function renderDutyPieChart(duties) {
+    const ctx = document.getElementById('dutyPieChart');
+    if (!ctx) return;
+    if (State.charts.dutyPie) State.charts.dutyPie.destroy();
+    State.charts.dutyPie = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Attended', 'Pending'],
+            datasets: [{ data: [duties.attended, duties.total - duties.attended], backgroundColor: ['#10b981', '#334155'], borderWidth: 0 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, cutout: '65%', plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 12 } } } } }
+    });
 }
