@@ -16,7 +16,7 @@ AI Smart Exam Manager is a premium, enterprise-grade institution management syst
 ### 🧠 1. CSP Timetable Generator
 Automates the creation of complex exam schedules using a **Constraint Satisfaction Problem (CSP)** approach with backtracking. 
 - **Physical Constraints:** Ensures subject student counts Never exceed room capacities.
-- **Temporal Constraints:** No overlapping exams for the same branch or in the same room.
+- **Temporal Constraints:** No overlapping exams for the same branch or in the same rooms.
 - **Optimization:** Sorts subjects by complexity (student count) to guarantee the most efficient fit.
 
 ### 🛡️ 2. Social-Graph Isolation (Anti-Cheating)
@@ -86,7 +86,7 @@ The system initializes with three specialized roles:
 
 ---
 
-## 📂 Project Architecture
+## 📂 Project Architectures
 
 ```text
 AI Smart Exam Manager/
