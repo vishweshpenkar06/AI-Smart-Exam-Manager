@@ -123,4 +123,4 @@ Built with a **Premium spatial-UI design system**, the application features:
 Distributed under the MIT License. See `LICENSE` for more information.
 
 ---
-Developed with ❤️ by the AI Smart Exam Manager Team.
+Developed with  by the AI Smart Exam Manager Team.
